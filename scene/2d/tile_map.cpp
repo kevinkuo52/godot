@@ -472,7 +472,13 @@ void TileMapLayer::_rendering_quadrants_update_cell(CellData &r_cell_data, SelfL
 		TileSetAtlasSource *atlas_source = Object::cast_to<TileSetAtlasSource>(source);
 		if (atlas_source && atlas_source->has_tile(r_cell_data.cell.get_atlas_coords()) && atlas_source->has_alternative_tile(r_cell_data.cell.get_atlas_coords(), r_cell_data.cell.alternative_tile)) {
 			is_valid = true;
-			tile_y_sort_origin = atlas_source->get_tile_data(r_cell_data.cell.get_atlas_coords(), r_cell_data.cell.alternative_tile)->get_y_sort_origin();
+			const TileData *tile_data;
+			if (r_cell_data.runtime_tile_data_cache) {
+				tile_data = r_cell_data.runtime_tile_data_cache;
+			} else {
+				tile_data = atlas_source->get_tile_data(r_cell_data.cell.get_atlas_coords(), r_cell_data.cell.alternative_tile);
+			}
+			tile_y_sort_origin = tile_data->get_y_sort_origin();
 		}
 	}
 
@@ -652,7 +658,7 @@ void TileMapLayer::_physics_update() {
 	const Ref<TileSet> &tile_set = tile_map_node->get_tileset();
 
 	// Check if we should cleanup everything.
-	bool forced_cleanup = in_destructor || !enabled || !tile_map_node->is_inside_tree() || !tile_set.is_valid() || !tile_map_node->is_visible_in_tree();
+	bool forced_cleanup = in_destructor || !enabled || !tile_map_node->is_inside_tree() || !tile_set.is_valid();
 	if (forced_cleanup) {
 		// Clean everything.
 		for (KeyValue<Vector2i, CellData> &kv : tile_map) {
@@ -680,6 +686,8 @@ void TileMapLayer::_physics_update() {
 
 void TileMapLayer::_physics_notify_tilemap_change(TileMapLayer::DirtyFlags p_what) {
 	Transform2D gl_transform = tile_map_node->get_global_transform();
+	PhysicsServer2D *ps = PhysicsServer2D::get_singleton();
+
 	bool in_editor = false;
 #ifdef TOOLS_ENABLED
 	in_editor = Engine::get_singleton()->is_editor_hint();
@@ -687,6 +695,7 @@ void TileMapLayer::_physics_notify_tilemap_change(TileMapLayer::DirtyFlags p_wha
 
 	if (p_what == DIRTY_FLAGS_TILE_MAP_XFORM) {
 		if (tile_map_node->is_inside_tree() && (!tile_map_node->is_collision_animatable() || in_editor)) {
+			// Move the collisison shapes along with the TileMap.
 			for (KeyValue<Vector2i, CellData> &kv : tile_map) {
 				const CellData &cell_data = kv.value;
 
@@ -694,12 +703,13 @@ void TileMapLayer::_physics_notify_tilemap_change(TileMapLayer::DirtyFlags p_wha
 					if (body.is_valid()) {
 						Transform2D xform(0, tile_map_node->map_to_local(bodies_coords[body]));
 						xform = gl_transform * xform;
-						PhysicsServer2D::get_singleton()->body_set_state(body, PhysicsServer2D::BODY_STATE_TRANSFORM, xform);
+						ps->body_set_state(body, PhysicsServer2D::BODY_STATE_TRANSFORM, xform);
 					}
 				}
 			}
 		}
 	} else if (p_what == DIRTY_FLAGS_TILE_MAP_LOCAL_XFORM) {
+		// With collisions animatable, move the collisison shapes along with the TileMap only on local xform change (they are synchornized on physics tick instead).
 		if (tile_map_node->is_inside_tree() && tile_map_node->is_collision_animatable() && !in_editor) {
 			for (KeyValue<Vector2i, CellData> &kv : tile_map) {
 				const CellData &cell_data = kv.value;
@@ -708,7 +718,22 @@ void TileMapLayer::_physics_notify_tilemap_change(TileMapLayer::DirtyFlags p_wha
 					if (body.is_valid()) {
 						Transform2D xform(0, tile_map_node->map_to_local(bodies_coords[body]));
 						xform = gl_transform * xform;
-						PhysicsServer2D::get_singleton()->body_set_state(body, PhysicsServer2D::BODY_STATE_TRANSFORM, xform);
+						ps->body_set_state(body, PhysicsServer2D::BODY_STATE_TRANSFORM, xform);
+					}
+				}
+			}
+		}
+	} else if (p_what == DIRTY_FLAGS_TILE_MAP_IN_TREE) {
+		// Changes in the tree may cause the space to change (e.g. when reparenting to a SubViewport).
+		if (tile_map_node->is_inside_tree()) {
+			RID space = tile_map_node->get_world_2d()->get_space();
+
+			for (KeyValue<Vector2i, CellData> &kv : tile_map) {
+				const CellData &cell_data = kv.value;
+
+				for (RID body : cell_data.bodies) {
+					if (body.is_valid()) {
+						ps->body_set_space(body, space);
 					}
 				}
 			}
@@ -902,7 +927,7 @@ void TileMapLayer::_navigation_update() {
 	NavigationServer2D *ns = NavigationServer2D::get_singleton();
 
 	// Check if we should cleanup everything.
-	bool forced_cleanup = in_destructor || !enabled || !navigation_enabled || !tile_map_node->is_inside_tree() || !tile_set.is_valid() || !tile_map_node->is_visible_in_tree();
+	bool forced_cleanup = in_destructor || !enabled || !navigation_enabled || !tile_map_node->is_inside_tree() || !tile_set.is_valid();
 
 	// ----------- Layer level processing -----------
 	if (forced_cleanup) {
@@ -2492,6 +2517,11 @@ Vector2i TileMapLayer::get_coords_for_body_rid(RID p_physics_body) const {
 }
 
 TileMapLayer::~TileMapLayer() {
+	if (!tile_map_node) {
+		// Temporary layer.
+		return;
+	}
+
 	in_destructor = true;
 	clear();
 	internal_update();
@@ -3066,8 +3096,12 @@ void TileMap::_internal_update() {
 		return;
 	}
 
+	// FIXME: This should only clear polygons that are no longer going to be used, but since it's difficult to determine,
+	// the cache is never cleared at runtime to prevent invalidating used polygons.
+	if (Engine::get_singleton()->is_editor_hint()) {
+		polygon_cache.clear();
+	}
 	// Update dirty quadrants on layers.
-	polygon_cache.clear();
 	for (Ref<TileMapLayer> &layer : layers) {
 		layer->internal_update();
 	}
@@ -3704,16 +3738,88 @@ bool TileMap::_get(const StringName &p_name, Variant &r_ret) const {
 void TileMap::_get_property_list(List<PropertyInfo> *p_list) const {
 	p_list->push_back(PropertyInfo(Variant::INT, "format", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR | PROPERTY_USAGE_INTERNAL));
 	p_list->push_back(PropertyInfo(Variant::NIL, "Layers", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_GROUP));
+
+#define MAKE_LAYER_PROPERTY(m_type, m_name, m_hint)                                                                                                                                                      \
+	{                                                                                                                                                                                                    \
+		const String property_name = vformat("layer_%d/" m_name, i);                                                                                                                                     \
+		p_list->push_back(PropertyInfo(m_type, property_name, PROPERTY_HINT_NONE, m_hint, (get(property_name) == property_get_revert(property_name)) ? PROPERTY_USAGE_EDITOR : PROPERTY_USAGE_DEFAULT)); \
+	}
+
 	for (unsigned int i = 0; i < layers.size(); i++) {
-		p_list->push_back(PropertyInfo(Variant::STRING, vformat("layer_%d/name", i), PROPERTY_HINT_NONE));
-		p_list->push_back(PropertyInfo(Variant::BOOL, vformat("layer_%d/enabled", i), PROPERTY_HINT_NONE));
-		p_list->push_back(PropertyInfo(Variant::COLOR, vformat("layer_%d/modulate", i), PROPERTY_HINT_NONE));
-		p_list->push_back(PropertyInfo(Variant::BOOL, vformat("layer_%d/y_sort_enabled", i), PROPERTY_HINT_NONE));
-		p_list->push_back(PropertyInfo(Variant::INT, vformat("layer_%d/y_sort_origin", i), PROPERTY_HINT_NONE, "suffix:px"));
-		p_list->push_back(PropertyInfo(Variant::INT, vformat("layer_%d/z_index", i), PROPERTY_HINT_NONE));
-		p_list->push_back(PropertyInfo(Variant::BOOL, vformat("layer_%d/navigation_enabled", i), PROPERTY_HINT_NONE));
+		MAKE_LAYER_PROPERTY(Variant::STRING, "name", "");
+		MAKE_LAYER_PROPERTY(Variant::BOOL, "enabled", "");
+		MAKE_LAYER_PROPERTY(Variant::COLOR, "modulate", "");
+		MAKE_LAYER_PROPERTY(Variant::BOOL, "y_sort_enabled", "");
+		MAKE_LAYER_PROPERTY(Variant::INT, "y_sort_origin", "suffix:px");
+		MAKE_LAYER_PROPERTY(Variant::INT, "z_index", "");
+		MAKE_LAYER_PROPERTY(Variant::BOOL, "navigation_enabled", "");
 		p_list->push_back(PropertyInfo(Variant::OBJECT, vformat("layer_%d/tile_data", i), PROPERTY_HINT_NONE, "", PROPERTY_USAGE_NO_EDITOR));
 	}
+
+#undef MAKE_LAYER_PROPERTY
+}
+
+bool TileMap::_property_can_revert(const StringName &p_name) const {
+	Vector<String> components = String(p_name).split("/", true, 2);
+	if (components.size() == 2 && components[0].begins_with("layer_")) {
+		int index = components[0].trim_prefix("layer_").to_int();
+		if (index <= 0 || index >= (int)layers.size()) {
+			return false;
+		}
+
+		if (components[1] == "name") {
+			return layers[index]->get_name() != default_layer->get_name();
+		} else if (components[1] == "enabled") {
+			return layers[index]->is_enabled() != default_layer->is_enabled();
+		} else if (components[1] == "modulate") {
+			return layers[index]->get_modulate() != default_layer->get_modulate();
+		} else if (components[1] == "y_sort_enabled") {
+			return layers[index]->is_y_sort_enabled() != default_layer->is_y_sort_enabled();
+		} else if (components[1] == "y_sort_origin") {
+			return layers[index]->get_y_sort_origin() != default_layer->get_y_sort_origin();
+		} else if (components[1] == "z_index") {
+			return layers[index]->get_z_index() != default_layer->get_z_index();
+		} else if (components[1] == "navigation_enabled") {
+			return layers[index]->is_navigation_enabled() != default_layer->is_navigation_enabled();
+		}
+	}
+
+	return false;
+}
+
+bool TileMap::_property_get_revert(const StringName &p_name, Variant &r_property) const {
+	Vector<String> components = String(p_name).split("/", true, 2);
+	if (components.size() == 2 && components[0].begins_with("layer_")) {
+		int index = components[0].trim_prefix("layer_").to_int();
+		if (index <= 0 || index >= (int)layers.size()) {
+			return false;
+		}
+
+		if (components[1] == "name") {
+			r_property = default_layer->get_name();
+			return true;
+		} else if (components[1] == "enabled") {
+			r_property = default_layer->is_enabled();
+			return true;
+		} else if (components[1] == "modulate") {
+			r_property = default_layer->get_modulate();
+			return true;
+		} else if (components[1] == "y_sort_enabled") {
+			r_property = default_layer->is_y_sort_enabled();
+			return true;
+		} else if (components[1] == "y_sort_origin") {
+			r_property = default_layer->get_y_sort_origin();
+			return true;
+		} else if (components[1] == "z_index") {
+			r_property = default_layer->get_z_index();
+			return true;
+		} else if (components[1] == "navigation_enabled") {
+			r_property = default_layer->is_navigation_enabled();
+			return true;
+		}
+	}
+
+	return false;
 }
 
 Vector2 TileMap::map_to_local(const Vector2i &p_pos) const {
@@ -4737,6 +4843,8 @@ TileMap::TileMap() {
 	new_layer->set_tile_map(this);
 	new_layer->set_layer_index_in_tile_map_node(0);
 	layers.push_back(new_layer);
+
+	default_layer.instantiate();
 }
 
 TileMap::~TileMap() {
