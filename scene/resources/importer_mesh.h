@@ -72,7 +72,7 @@ class ImporterMesh : public Resource {
 		void split_normals(const LocalVector<int> &p_indices, const LocalVector<Vector3> &p_normals);
 		static void _split_normals(Array &r_arrays, const LocalVector<int> &p_indices, const LocalVector<Vector3> &p_normals);
 	};
-	Vector<Surface> surfaces;
+	
 	Vector<String> blend_shapes;
 	Mesh::BlendShapeMode blend_shape_mode = Mesh::BLEND_SHAPE_MODE_NORMALIZED;
 
@@ -81,6 +81,9 @@ class ImporterMesh : public Resource {
 	Ref<ImporterMesh> shadow_mesh;
 
 	Size2i lightmap_size_hint;
+
+public:
+	Vector<Surface> surfaces;
 
 protected:
 	void _set_data(const Dictionary &p_data);
