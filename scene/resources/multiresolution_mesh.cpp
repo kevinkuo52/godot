@@ -39,6 +39,8 @@ void MultiresolutionMeshBuilder::group_triangles_to_nodes(PackedInt32Array indic
 }
 
 void MultiresolutionMeshBuilder::simplify_by_quadric_edge_collapse(int target_count, double agressiveness) {
+	// From: https://github.com/sp4cerat/Fast-Quadric-Mesh-Simplification/commit/f613d996cdc95c3f2f5390255b6f12ff8e9beb76
+
 	// init
 	//printf("%s - start\n", __FUNCTION__);
 	//int timeStart = timeGetTime();
