@@ -730,6 +730,10 @@ public:
 		}
 		return p_target;
 	}
+
+	static _ALWAYS_INLINE_ double min(double a, double b) {
+		return a < b ? a : b;
+	};
 };
 
 #endif // MATH_FUNCS_H
