@@ -48,6 +48,7 @@
 #include "scene/resources/animation.h"
 #include "scene/resources/box_shape_3d.h"
 #include "scene/resources/importer_mesh.h"
+#include "scene/resources/multiresolution_mesh.h"
 #include "scene/resources/packed_scene.h"
 #include "scene/resources/resource_format_text.h"
 #include "scene/resources/separation_ray_shape_3d.h"
@@ -544,6 +545,13 @@ void _populate_scalable_nodes_collection(Node *p_node, ScalableNodeCollection &p
 void _apply_permanent_scale_to_descendants(Node *p_root_node, Vector3 p_scale) {
 	ScalableNodeCollection scalable_node_collection;
 	_populate_scalable_nodes_collection(p_root_node, scalable_node_collection);
+
+	for (Ref<ImporterMesh> mesh : scalable_node_collection.importer_meshes) {
+		_rescale_importer_mesh(p_scale, mesh, false);
+		auto multi_res_mesh = new MultiresolutionMeshBuilder();
+		multi_res_mesh->generate_multiresolution_mesh(mesh, 0, 0, Array());
+
+	}
 	_apply_scale_to_scalable_node_collection(scalable_node_collection, p_scale);
 }
 
@@ -2118,11 +2126,26 @@ Node *ResourceImporterScene::_generate_meshes(Node *p_node, const Dictionary &p_
 						}
 					}
 				}
+				/*
+				auto m = src_mesh_node->get_mesh().ptr();
+				
+				if (m != NULL) {
+					MultiresolutionMeshBuilder *multi_res_mesh_builder = dynamic_cast<MultiresolutionMeshBuilder *>(m);
+					if (multi_res_mesh_builder != NULL) {
+						multi_res_mesh_builder->generate_multiresolution_mesh(merge_angle, split_angle, Array());
+					}
+				}*/
+				//auto multi_res_mesh = MultiresolutionMeshBuilder();
+				//multi_res_mesh.generate_multiresolution_mesh(src_mesh_node->get_mesh(), merge_angle, split_angle, Array());
+				
+
+				//((Ref<MultiresolutionMeshBuilder>)(src_mesh_node->get_mesh()))->generate_multiresolution_mesh(merge_angle, split_angle, Array());
 
 				if (generate_lods) {
 					Array skin_pose_transform_array = _get_skinned_pose_transforms(src_mesh_node);
 					src_mesh_node->get_mesh()->generate_lods(merge_angle, split_angle, skin_pose_transform_array);
 				}
+
 
 				if (create_shadow_meshes) {
 					src_mesh_node->get_mesh()->create_shadow_mesh();
@@ -2467,6 +2490,7 @@ Error ResourceImporterScene::import(const String &p_source_file, const String &p
 			scene_3d->scale(scale);
 		}
 	}
+
 	Dictionary subresources = p_options["_subresources"];
 
 	Dictionary node_data;

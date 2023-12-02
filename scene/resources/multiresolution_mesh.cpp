@@ -6,34 +6,161 @@
 #include "core/math/static_raycaster.h"
 #include "scene/resources/surface_tool.h"
 
-void MultiresolutionMeshBuilder::generate(float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array) {
+void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh> p_mesh, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array) {
+	/* try {
+
+	} catch (const std::string &ex) {
+		print_line("generate_multiresolution_mesh caught an exception:\n ", ex);
+	}*/
+
+	const int surf_count = p_mesh->get_surface_count();
+	const int blendshape_count = p_mesh->get_blend_shape_count();
+
+	struct LocalSurfData {
+		Mesh::PrimitiveType prim = {};
+		Array arr;
+		Array bsarr;
+		Dictionary lods;
+		String name;
+		Ref<Material> mat;
+		uint64_t fmt_compress_flags = 0;
+	};
+
+	Vector<LocalSurfData> surf_data_by_mesh;
+
+	Vector<String> blendshape_names;
+	for (int bsidx = 0; bsidx < blendshape_count; bsidx++) {
+		blendshape_names.append(p_mesh->get_blend_shape_name(bsidx));
+	}
+
+	for (int surf_idx = 0; surf_idx < surf_count; surf_idx++) {
+		Mesh::PrimitiveType prim = p_mesh->get_surface_primitive_type(surf_idx);
+		const uint64_t fmt_compress_flags = p_mesh->get_surface_format(surf_idx);
+		Array arr = p_mesh->get_surface_arrays(surf_idx);
+		String name = p_mesh->get_surface_name(surf_idx);
+		Dictionary lods;
+		Ref<Material> mat = p_mesh->get_surface_material(surf_idx);
+		Array blendshapes;
+		for (int bsidx = 0; bsidx < blendshape_count; bsidx++) {
+			Array current_bsarr = p_mesh->get_surface_blend_shape_arrays(surf_idx, bsidx);
+			blendshapes.push_back(current_bsarr);
+		}
+
+		LocalSurfData surf_data_dictionary = LocalSurfData();
+		surf_data_dictionary.prim = prim;
+		surf_data_dictionary.arr = arr;
+		surf_data_dictionary.bsarr = blendshapes;
+		surf_data_dictionary.lods = lods;
+		surf_data_dictionary.fmt_compress_flags = fmt_compress_flags;
+		surf_data_dictionary.name = name;
+		surf_data_dictionary.mat = mat;
+
+		if (prim != Mesh::PRIMITIVE_TRIANGLES) {
+			continue;
+		}
+
+		PackedInt32Array indices = arr[RS::ARRAY_INDEX];
+		Vector<Vector3> _normals = arr[RS::ARRAY_NORMAL];
+
+		for (Vector3 vert : (Vector<Vector3>)arr[RS::ARRAY_VERTEX]) {
+			vertices.append(Vertex{ vert });
+		}
+
+		for (int i = 0; i < indices.size(); i += 3) {
+			triangles.append(Triangle{ { indices[i], indices[i + 1], indices[i + 2] } });
+		}
+
+		simplify_by_quadric_edge_collapse(triangles.size() / 2);
+
+		Vector<Vector3> multi_res_verticies;
+		PackedInt32Array multi_res_indices;
+		for (Vertex vert : vertices) {
+			multi_res_verticies.append(vert.p);
+		}
+
+		for (Triangle tri : triangles) {
+			for (int index : tri.indices) {
+				multi_res_indices.append(index);
+			}
+		}
+
+		arr[ArrayMesh::ARRAY_VERTEX] = multi_res_verticies;
+		arr[ArrayMesh::ARRAY_INDEX] = multi_res_indices;
+
+		surf_data_dictionary.arr = arr;
+		surf_data_by_mesh.append(surf_data_dictionary);
+	}
+
+	p_mesh->clear();
+
+	for (int surf_idx = 0; surf_idx < surf_count; surf_idx++) {
+		const Mesh::PrimitiveType prim = surf_data_by_mesh[surf_idx].prim;
+		const Array arr = surf_data_by_mesh[surf_idx].arr;
+		const Array bsarr = surf_data_by_mesh[surf_idx].bsarr;
+		const Dictionary lods = surf_data_by_mesh[surf_idx].lods;
+		const uint64_t fmt_compress_flags = surf_data_by_mesh[surf_idx].fmt_compress_flags;
+		const String name = surf_data_by_mesh[surf_idx].name;
+		const Ref<Material> mat = surf_data_by_mesh[surf_idx].mat;
+
+		p_mesh->add_surface(prim, arr, bsarr, lods, mat, name, fmt_compress_flags);
+	}
+}
+
+
+
+/*
+void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Vector<Surface> &surfaces, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array) {
+
+	try {
+		
+	} catch (const std::string &ex) {
+		print_line("generate_multiresolution_mesh caught an exception:\n ", ex);
+	}
+
 	for (int i = 0; i < surfaces.size(); i++) {
 		if (surfaces[i].primitive != Mesh::PRIMITIVE_TRIANGLES) {
 			continue;
 		}
 
-		surfaces.write[i].lods.clear();
-		
+		//surfaces.write[i].lods.clear();
+
 		//Vector<Vector3> _vertices = surfaces[i].arrays[RS::ARRAY_VERTEX];
 		PackedInt32Array indices = surfaces[i].arrays[RS::ARRAY_INDEX];
 		Vector<Vector3> _normals = surfaces[i].arrays[RS::ARRAY_NORMAL];
-		
+
 		for (Vector3 vert : (Vector<Vector3>)surfaces[i].arrays[RS::ARRAY_VERTEX]) {
 			vertices.append(Vertex{ vert });
 		}
 
-		for (int i = 0; i < indices.size(); i+= 3) {
-			triangles.append(Triangle{ { indices[i], indices[i + 1], indices[i + 3] } });
+		for (int i = 0; i < indices.size(); i += 3) {
+			triangles.append(Triangle{ { indices[i], indices[i + 1], indices[i + 2] } });
 		}
 
+		simplify_by_quadric_edge_collapse(triangles.size()/ 2);
+
+		Vector<Vector3> multi_res_verticies;
+		PackedInt32Array multi_res_indices;
+		for (Vertex vert : vertices) {
+			multi_res_verticies.append(vert.p);
+		}
+
+		for (Triangle tri: triangles) {
+			for (int index : tri.indices) {
+				multi_res_indices.append(index);
+			}
+		}
+		auto a = surfaces[i].arrays[RS::ARRAY_INDEX];
+
+		//RenderingServer::mesh_create_arrays_from_surface_data();
+
+		//surfaces[i].arrays[RS::ARRAY_INDEX] = (const Variant)multi_res_indices;
+		
 		Vector<Vector2> uvs = surfaces[i].arrays[RS::ARRAY_TEX_UV];
 		Vector<Vector2> uv2s = surfaces[i].arrays[RS::ARRAY_TEX_UV2];
 		Vector<int> bones = surfaces[i].arrays[RS::ARRAY_BONES];
 		Vector<float> weights = surfaces[i].arrays[RS::ARRAY_WEIGHTS];
-
-
 	}
-}
+}*/
 
 void MultiresolutionMeshBuilder::group_triangles_to_nodes(PackedInt32Array indices) {
 }
@@ -124,7 +251,7 @@ void MultiresolutionMeshBuilder::simplify_by_quadric_edge_collapse(int target_co
 				if (tcount <= v0.tcount) {
 					// save ram
 					if (tcount)
-						memcpy(&refs.write[v0.tstart], &refs[tstart], tcount * sizeof(Ref));
+						memcpy(&refs.write[v0.tstart], &refs[tstart], tcount * sizeof(VertRef));
 				} else
 					// append
 					vertices.write[i0].tstart = tstart;
@@ -190,7 +317,7 @@ bool MultiresolutionMeshBuilder::flipped(Vector3 p, int i0, int i1, const Vertex
 void MultiresolutionMeshBuilder::update_triangles(int i0, const Vertex &v, const Vector<int> &deleted, int &deleted_triangles) {
 	Vector3 p;
 	for (int k = 0; k < v.tcount; ++k) {
-		Ref &r = refs.write[v.tstart + k];
+		VertRef &r = refs.write[v.tstart + k];
 		Triangle &t = triangles.write[r.tid];
 		if (t.deleted)
 			continue;

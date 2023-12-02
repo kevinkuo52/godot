@@ -103,8 +103,8 @@ public:
 	double m[10];
 };
 
-class MultiresolutionMeshBuilder : public ImporterMesh {
-	GDCLASS(MultiresolutionMeshBuilder, ImporterMesh);
+class MultiresolutionMeshBuilder{
+	//GDCLASS(MultiresolutionMeshBuilder, ImporterMesh);
 
 public:
 	struct Triangle {
@@ -120,18 +120,19 @@ public:
 		int border;
 	};
 
-	struct Ref {
+	struct VertRef {
 		int tid, tvertex;
 	};
 
 	Vector<Triangle> triangles;
 	Vector<Vertex> vertices;
-	Vector<Ref> refs;
+	Vector<VertRef> refs;
 
 	const int node_size = 300; // maybe 1<<15
 
 public:
-	void generate(float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
+	void generate_multiresolution_mesh(Ref<ImporterMesh> p_mesh, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
+	//void generate_multiresolution_mesh(Vector<Surface> &surfaces, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
 
 	void group_triangles_to_nodes(PackedInt32Array indices);
 
