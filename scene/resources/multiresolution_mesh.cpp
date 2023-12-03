@@ -47,6 +47,37 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh>
 		}
 
 		LocalSurfData surf_data_dictionary = LocalSurfData();
+
+		if (prim == Mesh::PRIMITIVE_TRIANGLES) {
+			PackedInt32Array indices = arr[RS::ARRAY_INDEX];
+			Vector<Vector3> _normals = arr[RS::ARRAY_NORMAL];
+
+			for (Vector3 vert : (Vector<Vector3>)arr[RS::ARRAY_VERTEX]) {
+				vertices.append(Vertex{ vert });
+			}
+
+			for (int i = 0; i < indices.size(); i += 3) {
+				triangles.append(Triangle{ { indices[i], indices[i + 1], indices[i + 2] } });
+			}
+
+			simplify_by_quadric_edge_collapse(triangles.size() / 2);
+
+			Vector<Vector3> multi_res_verticies;
+			PackedInt32Array multi_res_indices;
+			for (Vertex vert : vertices) {
+				multi_res_verticies.append(vert.p);
+			}
+
+			for (Triangle tri : triangles) {
+				for (int index : tri.indices) {
+					multi_res_indices.append(index);
+				}
+			}
+
+			arr[ArrayMesh::ARRAY_VERTEX] = multi_res_verticies;
+			arr[ArrayMesh::ARRAY_INDEX] = multi_res_indices;
+		}
+
 		surf_data_dictionary.prim = prim;
 		surf_data_dictionary.arr = arr;
 		surf_data_dictionary.bsarr = blendshapes;
@@ -54,40 +85,7 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh>
 		surf_data_dictionary.fmt_compress_flags = fmt_compress_flags;
 		surf_data_dictionary.name = name;
 		surf_data_dictionary.mat = mat;
-
-		if (prim != Mesh::PRIMITIVE_TRIANGLES) {
-			continue;
-		}
-
-		PackedInt32Array indices = arr[RS::ARRAY_INDEX];
-		Vector<Vector3> _normals = arr[RS::ARRAY_NORMAL];
-
-		for (Vector3 vert : (Vector<Vector3>)arr[RS::ARRAY_VERTEX]) {
-			vertices.append(Vertex{ vert });
-		}
-
-		for (int i = 0; i < indices.size(); i += 3) {
-			triangles.append(Triangle{ { indices[i], indices[i + 1], indices[i + 2] } });
-		}
-
-		simplify_by_quadric_edge_collapse(triangles.size() / 2);
-
-		Vector<Vector3> multi_res_verticies;
-		PackedInt32Array multi_res_indices;
-		for (Vertex vert : vertices) {
-			multi_res_verticies.append(vert.p);
-		}
-
-		for (Triangle tri : triangles) {
-			for (int index : tri.indices) {
-				multi_res_indices.append(index);
-			}
-		}
-
-		arr[ArrayMesh::ARRAY_VERTEX] = multi_res_verticies;
-		arr[ArrayMesh::ARRAY_INDEX] = multi_res_indices;
-
-		surf_data_dictionary.arr = arr;
+		
 		surf_data_by_mesh.append(surf_data_dictionary);
 	}
 
@@ -104,6 +102,34 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh>
 
 		p_mesh->add_surface(prim, arr, bsarr, lods, mat, name, fmt_compress_flags);
 	}
+}
+
+void MultiresolutionMeshBuilder::simplify_verticies_indicies_by_quadric_edge_collapse(Vector<Vector3> &p_verticies, List<int> &p_indices) {
+	for (Vector3 vert : p_verticies) {
+		vertices.append(Vertex{ vert });
+	}
+
+	for (int i = 0; i < p_indices.size(); i += 3) {
+		triangles.append(Triangle{ { p_indices[i], p_indices[i + 1], p_indices[i + 2] } });
+	}
+
+	simplify_by_quadric_edge_collapse(triangles.size() / 50);
+
+	Vector<Vector3> multi_res_verticies;
+	List<int> multi_res_indices;
+
+	for (Vertex vert : vertices) {
+		multi_res_verticies.append(vert.p);
+	}
+
+	for (Triangle tri : triangles) {
+		for (int index : tri.indices) {
+			multi_res_indices.push_back(index);
+		}
+	}
+
+	p_verticies = multi_res_verticies;
+	p_indices = multi_res_indices;
 }
 
 

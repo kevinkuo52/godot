@@ -546,12 +546,13 @@ void _apply_permanent_scale_to_descendants(Node *p_root_node, Vector3 p_scale) {
 	ScalableNodeCollection scalable_node_collection;
 	_populate_scalable_nodes_collection(p_root_node, scalable_node_collection);
 
+	/*
 	for (Ref<ImporterMesh> mesh : scalable_node_collection.importer_meshes) {
 		_rescale_importer_mesh(p_scale, mesh, false);
 		auto multi_res_mesh = new MultiresolutionMeshBuilder();
 		multi_res_mesh->generate_multiresolution_mesh(mesh, 0, 0, Array());
 
-	}
+	}*/
 	_apply_scale_to_scalable_node_collection(scalable_node_collection, p_scale);
 }
 

@@ -133,7 +133,7 @@ public:
 public:
 	void generate_multiresolution_mesh(Ref<ImporterMesh> p_mesh, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
 	//void generate_multiresolution_mesh(Vector<Surface> &surfaces, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
-
+	void simplify_verticies_indicies_by_quadric_edge_collapse(Vector<Vector3> &p_verticies, List<int> &p_indices);
 	void group_triangles_to_nodes(PackedInt32Array indices);
 
 	// Simplify
