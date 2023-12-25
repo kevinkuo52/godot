@@ -115,17 +115,23 @@ public:
 	};
 	struct Vertex {
 		Vector3 p;
-		int tstart, tcount;
+		int tstart; // start of triangle references
+		int tcount; // the number of triangles references that contains this vertex
 		SymetricMatrix q;
 		int border;
 	};
 
 	struct VertRef {
-		int tid, tvertex;
+		int tid;
+		int tvertex; // range 0, 1 ,2
 	};
 
 	Vector<Triangle> triangles;
 	Vector<Vertex> vertices;
+	// refs is in the order of vertices, where each "block" is size of numer of references (t.tstart + v.tcount) with ref metadata to that vert.
+	//  example:
+	//   v0 ref 0, v0 ref 1, v0 ref 2, v1 ref 0, v1 ref 1, v2 ref0, v2 ref1, v2 ref2
+	//   |____________v0____________|  |________v1______|  |________v2_____________|
 	Vector<VertRef> refs;
 
 	const int node_size = 300; // maybe 1<<15

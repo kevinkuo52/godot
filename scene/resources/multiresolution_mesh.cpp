@@ -90,7 +90,6 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh>
 	}
 
 	p_mesh->clear();
-
 	for (int surf_idx = 0; surf_idx < surf_count; surf_idx++) {
 		const Mesh::PrimitiveType prim = surf_data_by_mesh[surf_idx].prim;
 		const Array arr = surf_data_by_mesh[surf_idx].arr;
@@ -105,15 +104,32 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh>
 }
 
 void MultiresolutionMeshBuilder::simplify_verticies_indicies_by_quadric_edge_collapse(Vector<Vector3> &p_verticies, List<int> &p_indices) {
+
 	for (Vector3 vert : p_verticies) {
 		vertices.append(Vertex{ vert });
 	}
 
-	for (int i = 0; i < p_indices.size(); i += 3) {
-		triangles.append(Triangle{ { p_indices[i], p_indices[i + 1], p_indices[i + 2] } });
+	auto curr = p_indices.front();
+	while (curr != nullptr) {
+
+		Triangle triangle;
+		triangle.indices[0] = curr->get();
+		curr = curr->next();
+		triangle.indices[1] = curr->get();
+		curr = curr->next();
+		triangle.indices[2] = curr->get();
+		curr = curr->next();
+		/*
+		int triangles_i = triangles.size(); 
+		vertices.write[triangle.indices[0]].tstart = triangles_i;
+		vertices.write[triangle.indices[1]].tstart = triangles_i;
+		vertices.write[triangle.indices[2]].tstart = triangles_i;
+		*/
+
+		triangles.append(triangle);
 	}
 
-	simplify_by_quadric_edge_collapse(triangles.size() / 50);
+	simplify_by_quadric_edge_collapse(triangles.size() / 3);
 
 	Vector<Vector3> multi_res_verticies;
 	List<int> multi_res_indices;
@@ -256,7 +272,13 @@ void MultiresolutionMeshBuilder::simplify_by_quadric_edge_collapse(int target_co
 				calculate_error(i0, i1, p);
 
 				deleted0.resize(v0.tcount); // normals temporarily
+				for (auto d : deleted0) {
+					d = 0;
+				}
 				deleted1.resize(v1.tcount); // normals temporarily
+				for (auto d : deleted1) {
+					d = 0;
+				}
 
 				// don't remove if flipped
 				if (flipped(p, i0, i1, v0, v1, deleted0))
@@ -278,10 +300,10 @@ void MultiresolutionMeshBuilder::simplify_by_quadric_edge_collapse(int target_co
 					// save ram
 					if (tcount)
 						memcpy(&refs.write[v0.tstart], &refs[tstart], tcount * sizeof(VertRef));
-				} else
+				} else 
 					// append
 					vertices.write[i0].tstart = tstart;
-
+					
 				vertices.write[i0].tcount = tcount;
 				break;
 			}
@@ -315,13 +337,14 @@ bool MultiresolutionMeshBuilder::flipped(Vector3 p, int i0, int i1, const Vertex
 		int s = refs[v0.tstart + k].tvertex;
 		int id1 = t.indices[(s + 1) % 3];
 		int id2 = t.indices[(s + 2) % 3];
-
+		
 		if (id1 == i1 || id2 == i1) // delete ?
 		{
 			bordercount++;
 			deleted.write[k] = 1;
 			continue;
 		}
+
 		Vector3 d1 = vertices[id1].p - p;
 		d1.normalize();
 		Vector3 d2 = vertices[id2].p - p;
@@ -343,7 +366,7 @@ bool MultiresolutionMeshBuilder::flipped(Vector3 p, int i0, int i1, const Vertex
 void MultiresolutionMeshBuilder::update_triangles(int i0, const Vertex &v, const Vector<int> &deleted, int &deleted_triangles) {
 	Vector3 p;
 	for (int k = 0; k < v.tcount; ++k) {
-		VertRef &r = refs.write[v.tstart + k];
+		const VertRef &r = refs[v.tstart + k];
 		Triangle &t = triangles.write[r.tid];
 		if (t.deleted)
 			continue;
@@ -373,7 +396,6 @@ void MultiresolutionMeshBuilder::update_mesh(int iteration) {
 		}
 		triangles.resize(dst);
 	}
-	//
 
 	// Init Reference ID list
 	for (int i = 0; i < vertices.size(); ++i) {
@@ -381,9 +403,14 @@ void MultiresolutionMeshBuilder::update_mesh(int iteration) {
 		vertices.write[i].tcount = 0;
 	}
 	for (int i = 0; i < triangles.size(); ++i) {
+		/* for (int j = 0; j < 3; ++j) {
+			vertices.write[triangles[i].indices[j]].tcount++; //count the number of triangle that contains this vertex
+		}*/
 		Triangle &t = triangles.write[i];
 		for (int j = 0; j < 3; ++j) vertices.write[t.indices[j]].tcount++;
 	}
+
+	// tstart is the cumulative sum of of tcount 
 	int tstart = 0;
 	for (int i = 0; i < vertices.size(); ++i) {
 		Vertex &v = vertices.write[i];
@@ -393,10 +420,15 @@ void MultiresolutionMeshBuilder::update_mesh(int iteration) {
 	}
 
 	// Write References
+	// refs is in the order of vertices, where each "block" is size of numer of references (t.tstart + v.tcount) with ref metadata to that vert.
+	//  example:
+	//   v0 ref 0, v0 ref 1, v0 ref 2, v1 ref 0, v1 ref 1, v2 ref0, v2 ref1, v2 ref2
+	//   |____________v0____________|  |________v1______|  |________v2_____________|
 	refs.resize(triangles.size() * 3);
 	for (int i = 0; i < triangles.size(); ++i) {
 		Triangle &t = triangles.write[i];
 		for (int j = 0; j < 3; ++j) {
+			//Vertex v = vertices.write[triangles[i].indices[j]];
 			Vertex &v = vertices.write[t.indices[j]];
 			refs.write[v.tstart + v.tcount].tid = i;
 			refs.write[v.tstart + v.tcount].tvertex = j;
