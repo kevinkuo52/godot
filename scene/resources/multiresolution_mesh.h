@@ -106,6 +106,10 @@ public:
 class MultiresolutionMeshBuilder{
 	//GDCLASS(MultiresolutionMeshBuilder, ImporterMesh);
 
+private:
+	float normal_merge_angle = 60.0f;
+	float normal_split_angle = 25.0f; 
+
 public:
 	struct Triangle {
 		int indices[3]; 
@@ -143,6 +147,7 @@ public:
 	void group_triangles_to_nodes(PackedInt32Array indices);
 
 	// Simplify
+	PackedInt32Array MultiresolutionMeshBuilder::simplify_by_lod(Vector<Vector3> &p_verticies, List<int> &p_indices); 
 	void simplify_by_quadric_edge_collapse(int target_count, double agressiveness = 7);
 	bool flipped(Vector3 p, int i0, int i1, const Vertex &v0, const Vertex &v1, Vector<int> &deleted);
 	void update_triangles(int i0, const Vertex &v, const Vector<int> &deleted, int &deleted_triangles);

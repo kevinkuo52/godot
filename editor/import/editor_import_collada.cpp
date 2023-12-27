@@ -897,10 +897,11 @@ Error ColladaImport::_create_mesh_surfaces(bool p_optimize, Ref<ImporterMesh> &p
 		}
 
 		Vector<Vector3> multi_res_verticies;
-
+		
 		for (auto vert : vertex_array) {
 			multi_res_verticies.append(vert.vertex);
 		}
+		/*
 		auto multi_res_mesh_builder = MultiresolutionMeshBuilder();
 		multi_res_mesh_builder.simplify_verticies_indicies_by_quadric_edge_collapse(multi_res_verticies, indices_list);
 
@@ -911,7 +912,16 @@ Error ColladaImport::_create_mesh_surfaces(bool p_optimize, Ref<ImporterMesh> &p
 			v.vertex = multi_res_verticies[i];
 
 			vertex_array.append(v);
+		}*/
+		
+		auto multi_res_mesh_builder = MultiresolutionMeshBuilder();
+		auto indices = multi_res_mesh_builder.simplify_by_lod(multi_res_verticies, indices_list);
+
+		indices_list.clear();
+		for (auto index : indices) {
+			indices_list.push_back(index);
 		}
+
 
 		/*****************/
 		/* MAKE SURFACES  */
