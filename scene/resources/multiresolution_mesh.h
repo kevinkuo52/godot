@@ -103,6 +103,22 @@ public:
 	double m[10];
 };
 
+struct VGNode {
+	Vector<Vector3> vertices;
+	PackedInt32Array indices;
+	Vector<VGNode *> adjacencies;
+};
+
+struct Group {
+	Vector<VGNode *> nodes;
+};
+
+class DAG {
+public:
+	Vector<Vector<VGNode>> levels;
+};
+
+
 class MultiresolutionMeshBuilder{
 	//GDCLASS(MultiresolutionMeshBuilder, ImporterMesh);
 
@@ -138,16 +154,20 @@ public:
 	//   |____________v0____________|  |________v1______|  |________v2_____________|
 	Vector<VertRef> refs;
 
-	const int node_size = 300; // maybe 1<<15
+	const int node_size = 128; //300; // maybe 1<<15
+	const int group_size = 24; // typically ranges 8 - 32
 
 public:
+	void generate_multiresolution_mesh(Vector<Vector3> &p_verticies, PackedInt32Array & p_indices);
 	void generate_multiresolution_mesh(Ref<ImporterMesh> p_mesh, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
 	//void generate_multiresolution_mesh(Vector<Surface> &surfaces, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
 	void simplify_verticies_indicies_by_quadric_edge_collapse(Vector<Vector3> &p_verticies, List<int> &p_indices);
-	void group_triangles_to_nodes(PackedInt32Array indices);
-
+	Vector<VGNode> partition_triangles_to_nodes(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices);
+	Vector<Group> partition_nodes_to_groups(Vector<VGNode> &p_nodes);
+	VGNode merge_nodes(const Vector<VGNode*> &p_nodes);
+	void connect_all_children_to_all_parents(Vector<VGNode> &p_children, Vector<VGNode*> &p_parents);
 	// Simplify
-	PackedInt32Array MultiresolutionMeshBuilder::simplify_by_lod(Vector<Vector3> &p_verticies, List<int> &p_indices); 
+	PackedInt32Array simplify_by_lod(Vector<Vector3> &p_verticies, PackedInt32Array &p_indices); 
 	void simplify_by_quadric_edge_collapse(int target_count, double agressiveness = 7);
 	bool flipped(Vector3 p, int i0, int i1, const Vertex &v0, const Vertex &v1, Vector<int> &deleted);
 	void update_triangles(int i0, const Vertex &v, const Vector<int> &deleted, int &deleted_triangles);
