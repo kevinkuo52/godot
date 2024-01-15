@@ -687,6 +687,8 @@ typedef struct {
 } EnumRectData;
 
 typedef struct {
+	Vector<DISPLAYCONFIG_PATH_INFO> paths;
+	Vector<DISPLAYCONFIG_MODE_INFO> modes;
 	int count;
 	int screen;
 	float rate;
@@ -738,12 +740,30 @@ static BOOL CALLBACK _MonitorEnumProcRefreshRate(HMONITOR hMonitor, HDC hdcMonit
 		minfo.cbSize = sizeof(minfo);
 		GetMonitorInfoW(hMonitor, &minfo);
 
-		DEVMODEW dm;
-		memset(&dm, 0, sizeof(dm));
-		dm.dmSize = sizeof(dm);
-		EnumDisplaySettingsW(minfo.szDevice, ENUM_CURRENT_SETTINGS, &dm);
+		bool found = false;
+		for (const DISPLAYCONFIG_PATH_INFO &path : data->paths) {
+			DISPLAYCONFIG_SOURCE_DEVICE_NAME source_name;
+			memset(&source_name, 0, sizeof(source_name));
+			source_name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+			source_name.header.size = sizeof(source_name);
+			source_name.header.adapterId = path.sourceInfo.adapterId;
+			source_name.header.id = path.sourceInfo.id;
+			if (DisplayConfigGetDeviceInfo(&source_name.header) == ERROR_SUCCESS) {
+				if (wcscmp(minfo.szDevice, source_name.viewGdiDeviceName) == 0 && path.targetInfo.refreshRate.Numerator != 0 && path.targetInfo.refreshRate.Denominator != 0) {
+					data->rate = (double)path.targetInfo.refreshRate.Numerator / (double)path.targetInfo.refreshRate.Denominator;
+					found = true;
+					break;
+				}
+			}
+		}
+		if (!found) {
+			DEVMODEW dm;
+			memset(&dm, 0, sizeof(dm));
+			dm.dmSize = sizeof(dm);
+			EnumDisplaySettingsW(minfo.szDevice, ENUM_CURRENT_SETTINGS, &dm);
 
-		data->rate = dm.dmDisplayFrequency;
+			data->rate = dm.dmDisplayFrequency;
+		}
 	}
 
 	data->count++;
@@ -932,7 +952,19 @@ float DisplayServerWindows::screen_get_refresh_rate(int p_screen) const {
 	_THREAD_SAFE_METHOD_
 
 	p_screen = _get_screen_index(p_screen);
-	EnumRefreshRateData data = { 0, p_screen, SCREEN_REFRESH_RATE_FALLBACK };
+	EnumRefreshRateData data = { Vector<DISPLAYCONFIG_PATH_INFO>(), Vector<DISPLAYCONFIG_MODE_INFO>(), 0, p_screen, SCREEN_REFRESH_RATE_FALLBACK };
+
+	uint32_t path_count = 0;
+	uint32_t mode_count = 0;
+	if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count) == ERROR_SUCCESS) {
+		data.paths.resize(path_count);
+		data.modes.resize(mode_count);
+		if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &path_count, data.paths.ptrw(), &mode_count, data.modes.ptrw(), nullptr) != ERROR_SUCCESS) {
+			data.paths.clear();
+			data.modes.clear();
+		}
+	}
+
 	EnumDisplayMonitors(nullptr, nullptr, _MonitorEnumProcRefreshRate, (LPARAM)&data);
 	return data.rate;
 }
@@ -1102,9 +1134,9 @@ void DisplayServerWindows::delete_sub_window(WindowID p_window) {
 		window_set_transient(p_window, INVALID_WINDOW_ID);
 	}
 
-#ifdef VULKAN_ENABLED
-	if (context_vulkan) {
-		context_vulkan->window_destroy(p_window);
+#ifdef RD_ENABLED
+	if (context_rd) {
+		context_rd->window_destroy(p_window);
 	}
 #endif
 #ifdef GLES3_ENABLED
@@ -1534,9 +1566,9 @@ void DisplayServerWindows::window_set_size(const Size2i p_size, WindowID p_windo
 	wd.width = w;
 	wd.height = h;
 
-#if defined(VULKAN_ENABLED)
-	if (context_vulkan) {
-		context_vulkan->window_resize(p_window, w, h);
+#if defined(RD_ENABLED)
+	if (context_rd) {
+		context_rd->window_resize(p_window, w, h);
 	}
 #endif
 #if defined(GLES3_ENABLED)
@@ -1914,6 +1946,10 @@ bool DisplayServerWindows::window_is_focused(WindowID p_window) const {
 	const WindowData &wd = windows[p_window];
 
 	return wd.window_focused;
+}
+
+DisplayServerWindows::WindowID DisplayServerWindows::get_focused_window() const {
+	return last_focused_window;
 }
 
 bool DisplayServerWindows::window_can_draw(WindowID p_window) const {
@@ -2584,9 +2620,9 @@ void DisplayServerWindows::set_icon(const Ref<Image> &p_icon) {
 
 void DisplayServerWindows::window_set_vsync_mode(DisplayServer::VSyncMode p_vsync_mode, WindowID p_window) {
 	_THREAD_SAFE_METHOD_
-#if defined(VULKAN_ENABLED)
-	if (context_vulkan) {
-		context_vulkan->set_vsync_mode(p_window, p_vsync_mode);
+#if defined(RD_ENABLED)
+	if (context_rd) {
+		context_rd->set_vsync_mode(p_window, p_vsync_mode);
 	}
 #endif
 
@@ -2602,9 +2638,9 @@ void DisplayServerWindows::window_set_vsync_mode(DisplayServer::VSyncMode p_vsyn
 
 DisplayServer::VSyncMode DisplayServerWindows::window_get_vsync_mode(WindowID p_window) const {
 	_THREAD_SAFE_METHOD_
-#if defined(VULKAN_ENABLED)
-	if (context_vulkan) {
-		return context_vulkan->get_vsync_mode(p_window);
+#if defined(RD_ENABLED)
+	if (context_rd) {
+		return context_rd->get_vsync_mode(p_window);
 	}
 #endif
 
@@ -2616,7 +2652,6 @@ DisplayServer::VSyncMode DisplayServerWindows::window_get_vsync_mode(WindowID p_
 		return gl_manager_angle->is_using_vsync() ? DisplayServer::VSYNC_ENABLED : DisplayServer::VSYNC_DISABLED;
 	}
 #endif
-
 	return DisplayServer::VSYNC_ENABLED;
 }
 
@@ -2958,9 +2993,7 @@ LRESULT DisplayServerWindows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 			}
 		} break;
 		case WM_MOUSEACTIVATE: {
-			if (windows[window_id].no_focus) {
-				return MA_NOACTIVATEANDEAT; // Do not activate, and discard mouse messages.
-			} else if (windows[window_id].is_popup) {
+			if (windows[window_id].no_focus || windows[window_id].is_popup) {
 				return MA_NOACTIVATE; // Do not activate, but process mouse messages.
 			}
 		} break;
@@ -3769,10 +3802,10 @@ LRESULT DisplayServerWindows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 
 					rect_changed = true;
 				}
-#if defined(VULKAN_ENABLED)
-				if (context_vulkan && window.context_created) {
+#if defined(RD_ENABLED)
+				if (context_rd && window.context_created) {
 					// Note: Trigger resize event to update swapchains when window is minimized/restored, even if size is not changed.
-					context_vulkan->window_resize(window_id, window.width, window.height);
+					context_rd->window_resize(window_id, window.width, window.height);
 				}
 #endif
 			}
@@ -3800,7 +3833,6 @@ LRESULT DisplayServerWindows::WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARA
 			// Return here to prevent WM_MOVE and WM_SIZE from being sent
 			// See: https://docs.microsoft.com/en-us/windows/win32/winmsg/wm-windowposchanged#remarks
 			return 0;
-
 		} break;
 
 		case WM_ENTERSIZEMOVE: {
@@ -4326,13 +4358,32 @@ DisplayServer::WindowID DisplayServerWindows::_create_window(WindowMode p_mode, 
 			::DwmSetWindowAttribute(wd.hWnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &value, sizeof(value));
 		}
 
+#ifdef RD_ENABLED
+		if (context_rd) {
+			union {
 #ifdef VULKAN_ENABLED
-		if (context_vulkan) {
-			if (context_vulkan->window_create(id, p_vsync_mode, wd.hWnd, hInstance, WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top) != OK) {
-				memdelete(context_vulkan);
-				context_vulkan = nullptr;
+				VulkanContextWindows::WindowPlatformData vulkan;
+#endif
+#ifdef D3D12_ENABLED
+				D3D12Context::WindowPlatformData d3d12;
+#endif
+			} wpd;
+#ifdef VULKAN_ENABLED
+			if (rendering_driver == "vulkan") {
+				wpd.vulkan.window = wd.hWnd;
+				wpd.vulkan.instance = hInstance;
+			}
+#endif
+#ifdef D3D12_ENABLED
+			if (rendering_driver == "d3d12") {
+				wpd.d3d12.window = wd.hWnd;
+			}
+#endif
+			if (context_rd->window_create(id, p_vsync_mode, WindowRect.right - WindowRect.left, WindowRect.bottom - WindowRect.top, &wpd) != OK) {
+				memdelete(context_rd);
+				context_rd = nullptr;
 				windows.erase(id);
-				ERR_FAIL_V_MSG(INVALID_WINDOW_ID, "Failed to create Vulkan Window.");
+				ERR_FAIL_V_MSG(INVALID_WINDOW_ID, vformat("Failed to create %s Window.", context_rd->get_api_name()));
 			}
 			wd.context_created = true;
 		}
@@ -4568,6 +4619,22 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 		}
 	}
 
+	// Note: Windows Ink API for pen input, available on Windows 8+ only.
+	// Note: DPI conversion API, available on Windows 8.1+ only.
+	HMODULE user32_lib = LoadLibraryW(L"user32.dll");
+	if (user32_lib) {
+		win8p_GetPointerType = (GetPointerTypePtr)GetProcAddress(user32_lib, "GetPointerType");
+		win8p_GetPointerPenInfo = (GetPointerPenInfoPtr)GetProcAddress(user32_lib, "GetPointerPenInfo");
+		win81p_LogicalToPhysicalPointForPerMonitorDPI = (LogicalToPhysicalPointForPerMonitorDPIPtr)GetProcAddress(user32_lib, "LogicalToPhysicalPointForPerMonitorDPI");
+		win81p_PhysicalToLogicalPointForPerMonitorDPI = (PhysicalToLogicalPointForPerMonitorDPIPtr)GetProcAddress(user32_lib, "PhysicalToLogicalPointForPerMonitorDPI");
+
+		winink_available = win8p_GetPointerType && win8p_GetPointerPenInfo;
+	}
+
+	if (winink_available) {
+		tablet_drivers.push_back("winink");
+	}
+
 	// Note: Wacom WinTab driver API for pen input, for devices incompatible with Windows Ink.
 	HMODULE wintab_lib = LoadLibraryW(L"wintab32.dll");
 	if (wintab_lib) {
@@ -4584,21 +4651,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 		tablet_drivers.push_back("wintab");
 	}
 
-	// Note: Windows Ink API for pen input, available on Windows 8+ only.
-	// Note: DPI conversion API, available on Windows 8.1+ only.
-	HMODULE user32_lib = LoadLibraryW(L"user32.dll");
-	if (user32_lib) {
-		win8p_GetPointerType = (GetPointerTypePtr)GetProcAddress(user32_lib, "GetPointerType");
-		win8p_GetPointerPenInfo = (GetPointerPenInfoPtr)GetProcAddress(user32_lib, "GetPointerPenInfo");
-		win81p_LogicalToPhysicalPointForPerMonitorDPI = (LogicalToPhysicalPointForPerMonitorDPIPtr)GetProcAddress(user32_lib, "LogicalToPhysicalPointForPerMonitorDPI");
-		win81p_PhysicalToLogicalPointForPerMonitorDPI = (PhysicalToLogicalPointForPerMonitorDPIPtr)GetProcAddress(user32_lib, "PhysicalToLogicalPointForPerMonitorDPI");
-
-		winink_available = win8p_GetPointerType && win8p_GetPointerPenInfo;
-	}
-
-	if (winink_available) {
-		tablet_drivers.push_back("winink");
-	}
+	tablet_drivers.push_back("dummy");
 
 	if (OS::get_singleton()->is_hidpi_allowed()) {
 		HMODULE Shcore = LoadLibraryW(L"Shcore.dll");
@@ -4635,20 +4688,36 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 
 	_register_raw_input_devices(INVALID_WINDOW_ID);
 
+#if defined(RD_ENABLED)
 #if defined(VULKAN_ENABLED)
 	if (rendering_driver == "vulkan") {
-		context_vulkan = memnew(VulkanContextWindows);
-		if (context_vulkan->initialize() != OK) {
-			memdelete(context_vulkan);
-			context_vulkan = nullptr;
+		context_rd = memnew(VulkanContextWindows);
+	}
+#endif
+#if defined(D3D12_ENABLED)
+	if (rendering_driver == "d3d12") {
+		context_rd = memnew(D3D12Context);
+	}
+#endif
+
+	if (context_rd) {
+		if (context_rd->initialize() != OK) {
+			memdelete(context_rd);
+			context_rd = nullptr;
 			r_error = ERR_UNAVAILABLE;
 			return;
 		}
 	}
 #endif
-	// Init context and rendering device
+// Init context and rendering device
 #if defined(GLES3_ENABLED)
 
+#if defined(__arm__) || defined(__aarch64__) || defined(_M_ARM) || defined(_M_ARM64)
+	// There's no native OpenGL drivers on Windows for ARM, switch to ANGLE over DX.
+	if (rendering_driver == "opengl3") {
+		rendering_driver = "opengl3_angle";
+	}
+#else
 	bool fallback = GLOBAL_GET("rendering/gl_compatibility/fallback_to_angle");
 	if (fallback && (rendering_driver == "opengl3")) {
 		Dictionary gl_info = detect_wgl();
@@ -4669,6 +4738,7 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 			rendering_driver = "opengl3_angle";
 		}
 	}
+#endif
 
 	if (rendering_driver == "opengl3") {
 		gl_manager_native = memnew(GLManagerNative_Windows);
@@ -4705,7 +4775,8 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 		if (p_screen == SCREEN_OF_MAIN_WINDOW) {
 			p_screen = SCREEN_PRIMARY;
 		}
-		window_position = screen_get_position(p_screen) + (screen_get_size(p_screen) - p_resolution) / 2;
+		Rect2i scr_rect = screen_get_usable_rect(p_screen);
+		window_position = scr_rect.position + (scr_rect.size - p_resolution) / 2;
 	}
 
 	WindowID main_window = _create_window(p_mode, p_vsync_mode, p_flags, Rect2i(window_position, p_resolution));
@@ -4721,11 +4792,10 @@ DisplayServerWindows::DisplayServerWindows(const String &p_rendering_driver, Win
 
 	show_window(MAIN_WINDOW_ID);
 
-#if defined(VULKAN_ENABLED)
-
-	if (rendering_driver == "vulkan") {
-		rendering_device_vulkan = memnew(RenderingDeviceVulkan);
-		rendering_device_vulkan->initialize(context_vulkan);
+#if defined(RD_ENABLED)
+	if (context_rd) {
+		rendering_device = memnew(RenderingDevice);
+		rendering_device->initialize(context_rd);
 
 		RendererCompositorRD::make_current();
 	}
@@ -4764,6 +4834,9 @@ Vector<String> DisplayServerWindows::get_rendering_drivers_func() {
 #ifdef VULKAN_ENABLED
 	drivers.push_back("vulkan");
 #endif
+#ifdef D3D12_ENABLED
+	drivers.push_back("d3d12");
+#endif
 #ifdef GLES3_ENABLED
 	drivers.push_back("opengl3");
 	drivers.push_back("opengl3_angle");
@@ -4785,6 +4858,16 @@ DisplayServer *DisplayServerWindows::create_func(const String &p_rendering_drive
 							"If you have recently updated your video card drivers, try rebooting.",
 							executable_name),
 					"Unable to initialize Vulkan video driver");
+		} else if (p_rendering_driver == "d3d12") {
+			String executable_name = OS::get_singleton()->get_executable_path().get_file();
+			OS::get_singleton()->alert(
+					vformat("Your video card drivers seem not to support the required DirectX 12 version.\n\n"
+							"If possible, consider updating your video card drivers or using the OpenGL 3 driver.\n\n"
+							"You can enable the OpenGL 3 driver by starting the engine from the\n"
+							"command line with the command:\n\n    \"%s\" --rendering-driver opengl3\n\n"
+							"If you have recently updated your video card drivers, try rebooting.",
+							executable_name),
+					"Unable to initialize DirectX 12 video driver");
 		} else {
 			OS::get_singleton()->alert(
 					"Your video card drivers seem not to support the required OpenGL 3.3 version.\n\n"
@@ -4823,9 +4906,9 @@ DisplayServerWindows::~DisplayServerWindows() {
 #endif
 
 	if (windows.has(MAIN_WINDOW_ID)) {
-#ifdef VULKAN_ENABLED
-		if (context_vulkan) {
-			context_vulkan->window_destroy(MAIN_WINDOW_ID);
+#ifdef RD_ENABLED
+		if (context_rd) {
+			context_rd->window_destroy(MAIN_WINDOW_ID);
 		}
 #endif
 		if (wintab_available && windows[MAIN_WINDOW_ID].wtctx) {
@@ -4835,16 +4918,16 @@ DisplayServerWindows::~DisplayServerWindows() {
 		DestroyWindow(windows[MAIN_WINDOW_ID].hWnd);
 	}
 
-#if defined(VULKAN_ENABLED)
-	if (rendering_device_vulkan) {
-		rendering_device_vulkan->finalize();
-		memdelete(rendering_device_vulkan);
-		rendering_device_vulkan = nullptr;
+#ifdef RD_ENABLED
+	if (rendering_device) {
+		rendering_device->finalize();
+		memdelete(rendering_device);
+		rendering_device = nullptr;
 	}
 
-	if (context_vulkan) {
-		memdelete(context_vulkan);
-		context_vulkan = nullptr;
+	if (context_rd) {
+		memdelete(context_rd);
+		context_rd = nullptr;
 	}
 #endif
 

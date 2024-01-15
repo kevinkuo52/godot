@@ -1117,7 +1117,7 @@ String String::get_with_code_lines() const {
 	return ret;
 }
 
-int String::get_slice_count(String p_splitter) const {
+int String::get_slice_count(const String &p_splitter) const {
 	if (is_empty()) {
 		return 0;
 	}
@@ -1136,7 +1136,7 @@ int String::get_slice_count(String p_splitter) const {
 	return slices;
 }
 
-String String::get_slice(String p_splitter, int p_slice) const {
+String String::get_slice(const String &p_splitter, int p_slice) const {
 	if (is_empty() || p_splitter.is_empty()) {
 		return "";
 	}
@@ -3515,7 +3515,7 @@ bool String::matchn(const String &p_wildcard) const {
 	return _wildcard_match(p_wildcard.get_data(), get_data(), false);
 }
 
-String String::format(const Variant &values, String placeholder) const {
+String String::format(const Variant &values, const String &placeholder) const {
 	String new_string = String(this->ptr());
 
 	if (values.get_type() == Variant::ARRAY) {
@@ -3961,27 +3961,42 @@ static int _humanize_digits(int p_num) {
 }
 
 String String::humanize_size(uint64_t p_size) {
+	int magnitude = 0;
 	uint64_t _div = 1;
-	Vector<String> prefixes;
-	prefixes.push_back(RTR("B"));
-	prefixes.push_back(RTR("KiB"));
-	prefixes.push_back(RTR("MiB"));
-	prefixes.push_back(RTR("GiB"));
-	prefixes.push_back(RTR("TiB"));
-	prefixes.push_back(RTR("PiB"));
-	prefixes.push_back(RTR("EiB"));
-
-	int prefix_idx = 0;
-
-	while (prefix_idx < prefixes.size() - 1 && p_size > (_div * 1024)) {
+	while (p_size > _div * 1024 && magnitude < 6) {
 		_div *= 1024;
-		prefix_idx++;
+		magnitude++;
 	}
 
-	const int digits = prefix_idx > 0 ? _humanize_digits(p_size / _div) : 0;
-	const double divisor = prefix_idx > 0 ? _div : 1;
+	if (magnitude == 0) {
+		return String::num(p_size) + " " + RTR("B");
+	} else {
+		String suffix;
+		switch (magnitude) {
+			case 1:
+				suffix = RTR("KiB");
+				break;
+			case 2:
+				suffix = RTR("MiB");
+				break;
+			case 3:
+				suffix = RTR("GiB");
+				break;
+			case 4:
+				suffix = RTR("TiB");
+				break;
+			case 5:
+				suffix = RTR("PiB");
+				break;
+			case 6:
+				suffix = RTR("EiB");
+				break;
+		}
 
-	return String::num(p_size / divisor).pad_decimals(digits) + " " + prefixes[prefix_idx];
+		const double divisor = _div;
+		const int digits = _humanize_digits(p_size / _div);
+		return String::num(p_size / divisor).pad_decimals(digits) + " " + suffix;
+	}
 }
 
 bool String::is_absolute_path() const {
@@ -4569,7 +4584,7 @@ bool String::is_valid_ip_address() const {
 	if (find(":") >= 0) {
 		Vector<String> ip = split(":");
 		for (int i = 0; i < ip.size(); i++) {
-			String n = ip[i];
+			const String &n = ip[i];
 			if (n.is_empty()) {
 				continue;
 			}
@@ -4591,7 +4606,7 @@ bool String::is_valid_ip_address() const {
 			return false;
 		}
 		for (int i = 0; i < ip.size(); i++) {
-			String n = ip[i];
+			const String &n = ip[i];
 			if (!n.is_valid_int()) {
 				return false;
 			}
@@ -4842,6 +4857,7 @@ String String::sprintf(const Array &values, bool *error) const {
 	bool pad_with_zeros = false;
 	bool left_justified = false;
 	bool show_sign = false;
+	bool as_unsigned = false;
 
 	if (error) {
 		*error = true;
@@ -4882,16 +4898,27 @@ String String::sprintf(const Array &values, bool *error) const {
 						case 'x':
 							break;
 						case 'X':
-							base = 16;
 							capitalize = true;
 							break;
 					}
 					// Get basic number.
-					String str = String::num_int64(ABS(value), base, capitalize);
+					String str;
+					if (!as_unsigned) {
+						str = String::num_int64(ABS(value), base, capitalize);
+					} else {
+						uint64_t uvalue = *((uint64_t *)&value);
+						// In unsigned hex, if the value fits in 32 bits, trim it down to that.
+						if (base == 16 && value < 0 && value >= INT32_MIN) {
+							uvalue &= 0xffffffff;
+						}
+						str = String::num_uint64(uvalue, base, capitalize);
+					}
 					int number_len = str.length();
 
+					bool negative = value < 0 && !as_unsigned;
+
 					// Padding.
-					int pad_chars_count = (value < 0 || show_sign) ? min_chars - 1 : min_chars;
+					int pad_chars_count = (negative || show_sign) ? min_chars - 1 : min_chars;
 					String pad_char = pad_with_zeros ? String("0") : String(" ");
 					if (left_justified) {
 						str = str.rpad(pad_chars_count, pad_char);
@@ -4900,8 +4927,8 @@ String String::sprintf(const Array &values, bool *error) const {
 					}
 
 					// Sign.
-					if (show_sign || value < 0) {
-						String sign_char = value < 0 ? "-" : "+";
+					if (show_sign || negative) {
+						String sign_char = negative ? "-" : "+";
 						if (left_justified) {
 							str = str.insert(0, sign_char);
 						} else {
@@ -5094,6 +5121,10 @@ String String::sprintf(const Array &values, bool *error) const {
 					show_sign = true;
 					break;
 				}
+				case 'u': { // Treat as unsigned (for int/hex).
+					as_unsigned = true;
+					break;
+				}
 				case '0':
 				case '1':
 				case '2':
@@ -5192,7 +5223,7 @@ String String::sprintf(const Array &values, bool *error) const {
 	return formatted;
 }
 
-String String::quote(String quotechar) const {
+String String::quote(const String &quotechar) const {
 	return quotechar + *this + quotechar;
 }
 

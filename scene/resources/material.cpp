@@ -468,7 +468,7 @@ void ShaderMaterial::get_argument_options(const StringName &p_function, int p_id
 			}
 		}
 	}
-	Resource::get_argument_options(p_function, p_idx, r_options);
+	Material::get_argument_options(p_function, p_idx, r_options);
 }
 
 bool ShaderMaterial::_can_do_next_pass() const {
@@ -1947,7 +1947,7 @@ Ref<Texture2D> BaseMaterial3D::get_texture(TextureParam p_param) const {
 	return textures[p_param];
 }
 
-Ref<Texture2D> BaseMaterial3D::get_texture_by_name(StringName p_name) const {
+Ref<Texture2D> BaseMaterial3D::get_texture_by_name(const StringName &p_name) const {
 	for (int i = 0; i < (int)BaseMaterial3D::TEXTURE_MAX; i++) {
 		TextureParam param = TextureParam(i);
 		if (p_name == shader_names->texture_names[param]) {
@@ -3167,7 +3167,7 @@ bool StandardMaterial3D::_set(const StringName &p_name, const Variant &p_value) 
 			{ "flags_use_shadow_to_opacity", "shadow_to_opacity" },
 			{ "flags_no_depth_test", "no_depth_test" },
 			{ "flags_use_point_size", "use_point_size" },
-			{ "flags_fixed_size", "fixed_Size" },
+			{ "flags_fixed_size", "fixed_size" },
 			{ "flags_albedo_tex_force_srgb", "albedo_texture_force_srgb" },
 			{ "flags_do_not_receive_shadows", "disable_receive_shadows" },
 			{ "flags_disable_ambient_light", "disable_ambient_light" },

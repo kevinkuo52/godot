@@ -30,6 +30,9 @@ def get_opts():
 
     return [
         ("initial_memory", "Initial WASM memory (in MiB)", 32),
+        # Matches default values from before Emscripten 3.1.27. New defaults are too low for Godot.
+        ("stack_size", "WASM stack size (in KiB)", 5120),
+        ("default_pthread_stack_size", "WASM pthread default stack size (in KiB)", 2048),
         BoolVariable("use_assertions", "Use Emscripten runtime assertions", False),
         BoolVariable("use_ubsan", "Use Emscripten undefined behavior sanitizer (UBSAN)", False),
         BoolVariable("use_asan", "Use Emscripten address sanitizer (ASAN)", False),
@@ -186,6 +189,10 @@ def configure(env: "Environment"):
     env["LIBPREFIXES"] = ["$LIBPREFIX"]
     env["LIBSUFFIXES"] = ["$LIBSUFFIX"]
 
+    # Get version info for checks below.
+    cc_version = get_compiler_version(env)
+    cc_semver = (cc_version["major"], cc_version["minor"], cc_version["patch"])
+
     env.Prepend(CPPPATH=["#platform/web"])
     env.Append(CPPDEFINES=["WEB_ENABLED", "UNIX_ENABLED"])
 
@@ -199,16 +206,16 @@ def configure(env: "Environment"):
     if env["javascript_eval"]:
         env.Append(CPPDEFINES=["JAVASCRIPT_EVAL_ENABLED"])
 
+    stack_size_opt = "STACK_SIZE" if cc_semver >= (3, 1, 25) else "TOTAL_STACK"
+    env.Append(LINKFLAGS=["-s", "%s=%sKB" % (stack_size_opt, env["stack_size"])])
+
     # Thread support (via SharedArrayBuffer).
     env.Append(CPPDEFINES=["PTHREAD_NO_RENAME"])
     env.Append(CCFLAGS=["-s", "USE_PTHREADS=1"])
     env.Append(LINKFLAGS=["-s", "USE_PTHREADS=1"])
+    env.Append(LINKFLAGS=["-s", "DEFAULT_PTHREAD_STACK_SIZE=%sKB" % env["default_pthread_stack_size"]])
     env.Append(LINKFLAGS=["-s", "PTHREAD_POOL_SIZE=8"])
     env.Append(LINKFLAGS=["-s", "WASM_MEM_MAX=2048MB"])
-
-    # Get version info for checks below.
-    cc_version = get_compiler_version(env)
-    cc_semver = (cc_version["major"], cc_version["minor"], cc_version["patch"])
 
     if env["lto"] != "none":
         # Workaround https://github.com/emscripten-core/emscripten/issues/19781.

@@ -507,7 +507,7 @@ void TileSetAtlasSourceEditor::AtlasTileProxyObject::_get_property_list(List<Pro
 	}
 }
 
-void TileSetAtlasSourceEditor::AtlasTileProxyObject::edit(Ref<TileSetAtlasSource> p_tile_set_atlas_source, RBSet<TileSelection> p_tiles) {
+void TileSetAtlasSourceEditor::AtlasTileProxyObject::edit(Ref<TileSetAtlasSource> p_tile_set_atlas_source, const RBSet<TileSelection> &p_tiles) {
 	ERR_FAIL_COND(!p_tile_set_atlas_source.is_valid());
 	ERR_FAIL_COND(p_tiles.is_empty());
 	for (const TileSelection &E : p_tiles) {
@@ -954,7 +954,7 @@ void TileSetAtlasSourceEditor::_tile_data_editor_dropdown_button_pressed() {
 }
 
 void TileSetAtlasSourceEditor::_tile_data_editors_tree_selected() {
-	tile_data_editors_popup->call_deferred(SNAME("hide"));
+	callable_mp((Window *)tile_data_editors_popup, &Window::hide).call_deferred();
 	_update_current_tile_data_editor();
 	tile_atlas_control->queue_redraw();
 	tile_atlas_control_unscaled->queue_redraw();
@@ -1869,7 +1869,7 @@ void TileSetAtlasSourceEditor::_tile_atlas_control_unscaled_draw() {
 		for (int i = 0; i < tile_set_atlas_source->get_tiles_count(); i++) {
 			Vector2i coords = tile_set_atlas_source->get_tile_id(i);
 			Rect2i texture_region = tile_set_atlas_source->get_tile_texture_region(coords);
-			Vector2i position = texture_region.get_center() + tile_set_atlas_source->get_tile_data(coords, 0)->get_texture_origin();
+			Vector2 position = ((Rect2)texture_region).get_center() + tile_set_atlas_source->get_tile_data(coords, 0)->get_texture_origin();
 
 			Transform2D xform = tile_atlas_control->get_parent_control()->get_transform();
 			xform.translate_local(position);
@@ -1892,7 +1892,7 @@ void TileSetAtlasSourceEditor::_tile_atlas_control_unscaled_draw() {
 					continue;
 				}
 				Rect2i texture_region = tile_set_atlas_source->get_tile_texture_region(E.tile);
-				Vector2i position = texture_region.get_center() + tile_set_atlas_source->get_tile_data(E.tile, 0)->get_texture_origin();
+				Vector2 position = ((Rect2)texture_region).get_center() + tile_set_atlas_source->get_tile_data(E.tile, 0)->get_texture_origin();
 
 				Transform2D xform = tile_atlas_control->get_parent_control()->get_transform();
 				xform.translate_local(position);

@@ -1966,7 +1966,7 @@ void EditorHelp::_help_callback(const String &p_topic) {
 	}
 
 	if (class_desc->is_ready()) {
-		class_desc->call_deferred(SNAME("scroll_to_paragraph"), line);
+		callable_mp(class_desc, &RichTextLabel::scroll_to_paragraph).call_deferred(line);
 	} else {
 		scroll_to = line;
 	}
@@ -2360,6 +2360,7 @@ void EditorHelp::_add_text(const String &p_bbcode) {
 	_add_text_to_rt(p_bbcode, class_desc, this, edited_class);
 }
 
+int EditorHelp::doc_generation_count = 0;
 String EditorHelp::doc_version_hash;
 Thread EditorHelp::worker_thread;
 
@@ -2392,6 +2393,8 @@ void EditorHelp::_load_doc_thread(void *p_udata) {
 		// We have to go back to the main thread to start from scratch, bypassing any possibly existing cache.
 		callable_mp_static(&EditorHelp::generate_doc).bind(false).call_deferred();
 	}
+
+	OS::get_singleton()->benchmark_end_measure("EditorHelp", vformat("Generate Documentation (Run %d)", doc_generation_count));
 }
 
 void EditorHelp::_gen_doc_thread(void *p_udata) {
@@ -2417,6 +2420,8 @@ void EditorHelp::_gen_doc_thread(void *p_udata) {
 	if (err) {
 		ERR_PRINT("Cannot save editor help cache (" + get_cache_full_path() + ").");
 	}
+
+	OS::get_singleton()->benchmark_end_measure("EditorHelp", vformat("Generate Documentation (Run %d)", doc_generation_count));
 }
 
 void EditorHelp::_gen_extensions_docs() {
@@ -2424,7 +2429,8 @@ void EditorHelp::_gen_extensions_docs() {
 }
 
 void EditorHelp::generate_doc(bool p_use_cache) {
-	OS::get_singleton()->benchmark_begin_measure("EditorHelp::generate_doc");
+	doc_generation_count++;
+	OS::get_singleton()->benchmark_begin_measure("EditorHelp", vformat("Generate Documentation (Run %d)", doc_generation_count));
 
 	// In case not the first attempt.
 	_wait_for_thread();
@@ -2444,8 +2450,6 @@ void EditorHelp::generate_doc(bool p_use_cache) {
 		doc->generate();
 		worker_thread.start(_gen_doc_thread, nullptr);
 	}
-
-	OS::get_singleton()->benchmark_end_measure("EditorHelp::generate_doc");
 }
 
 void EditorHelp::_toggle_scripts_pressed() {
@@ -2863,10 +2867,10 @@ void EditorHelpTooltip::parse_tooltip(const String &p_text) {
 	PackedStringArray slices = p_text.split("|", true, 3);
 	ERR_FAIL_COND_MSG(slices.size() < 4, "Invalid tooltip formatting. The expect string should be formatted as 'type|class|property|args'.");
 
-	String type = slices[0];
-	String class_name = slices[1];
-	String property_name = slices[2];
-	String property_args = slices[3];
+	const String &type = slices[0];
+	const String &class_name = slices[1];
+	const String &property_name = slices[2];
+	const String &property_args = slices[3];
 
 	String title;
 	String description;

@@ -460,7 +460,7 @@ String EditorExportPlatformAndroid::get_valid_basename() const {
 		if (is_digit(c) && first) {
 			continue;
 		}
-		if (is_ascii_alphanumeric_char(c)) {
+		if (is_ascii_identifier_char(c)) {
 			name += String::chr(c);
 			first = false;
 		}
@@ -533,13 +533,6 @@ bool EditorExportPlatformAndroid::is_package_name_valid(const String &p_package,
 	if (first) {
 		if (r_error) {
 			*r_error = TTR("Package segments must be of non-zero length.");
-		}
-		return false;
-	}
-
-	if (p_package.find("$genname") >= 0 && !is_project_name_valid()) {
-		if (r_error) {
-			*r_error = TTR("The project name does not meet the requirement for the package name format. Please explicitly specify the package name.");
 		}
 		return false;
 	}
@@ -1118,7 +1111,7 @@ void EditorExportPlatformAndroid::_fix_manifest(const Ref<EditorExportPreset> &p
 						}
 
 						for (int i = 0; i < feature_names.size(); i++) {
-							String feature_name = feature_names[i];
+							const String &feature_name = feature_names[i];
 							bool feature_required = feature_required_list[i];
 							int feature_version = feature_versions[i];
 							bool has_version_attribute = feature_version != -1;
@@ -1830,10 +1823,10 @@ void EditorExportPlatformAndroid::get_export_options(List<ExportOption> *r_optio
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/debug", PROPERTY_HINT_GLOBAL_FILE, "*.keystore,*.jks", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/debug_user", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/debug_password", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/debug_password", PROPERTY_HINT_PASSWORD, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/release", PROPERTY_HINT_GLOBAL_FILE, "*.keystore,*.jks", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/release_user", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
-	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/release_password", PROPERTY_HINT_NONE, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
+	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "keystore/release_password", PROPERTY_HINT_PASSWORD, "", PROPERTY_USAGE_DEFAULT | PROPERTY_USAGE_SECRET), ""));
 
 	r_options->push_back(ExportOption(PropertyInfo(Variant::INT, "version/code", PROPERTY_HINT_RANGE, "1,4096,1,or_greater"), 1));
 	r_options->push_back(ExportOption(PropertyInfo(Variant::STRING, "version/name", PROPERTY_HINT_PLACEHOLDER_TEXT, "Leave empty to use project version"), ""));
@@ -2236,6 +2229,54 @@ String EditorExportPlatformAndroid::get_apksigner_path(int p_target_sdk, bool p_
 	return apksigner_path;
 }
 
+static bool has_valid_keystore_credentials(String &r_error_str, const String &p_keystore, const String &p_username, const String &p_password, const String &p_type) {
+	String output;
+	List<String> args;
+	args.push_back("-list");
+	args.push_back("-keystore");
+	args.push_back(p_keystore);
+	args.push_back("-storepass");
+	args.push_back(p_password);
+	args.push_back("-alias");
+	args.push_back(p_username);
+	Error error = OS::get_singleton()->execute("keytool", args, &output, nullptr, true);
+	String keytool_error = "keytool error:";
+	bool valid = output.substr(0, keytool_error.length()) != keytool_error;
+
+	if (error != OK) {
+		r_error_str = TTR("Error: There was a problem validating the keystore username and password");
+		return false;
+	}
+	if (!valid) {
+		r_error_str = TTR(p_type + " Username and/or Password is invalid for the given " + p_type + " Keystore");
+		return false;
+	}
+	r_error_str = "";
+	return true;
+}
+
+bool EditorExportPlatformAndroid::has_valid_username_and_password(const Ref<EditorExportPreset> &p_preset, String &r_error) {
+	String dk = p_preset->get_or_env("keystore/debug", ENV_ANDROID_KEYSTORE_DEBUG_PATH);
+	String dk_user = p_preset->get_or_env("keystore/debug_user", ENV_ANDROID_KEYSTORE_DEBUG_USER);
+	String dk_password = p_preset->get_or_env("keystore/debug_password", ENV_ANDROID_KEYSTORE_DEBUG_PASS);
+	String rk = p_preset->get_or_env("keystore/release", ENV_ANDROID_KEYSTORE_RELEASE_PATH);
+	String rk_user = p_preset->get_or_env("keystore/release_user", ENV_ANDROID_KEYSTORE_RELEASE_USER);
+	String rk_password = p_preset->get_or_env("keystore/release_password", ENV_ANDROID_KEYSTORE_RELEASE_PASS);
+
+	bool valid = true;
+	if (!dk.is_empty() && !dk_user.is_empty() && !dk_password.is_empty()) {
+		String err = "";
+		valid = has_valid_keystore_credentials(err, dk, dk_user, dk_password, "Debug");
+		r_error += err;
+	}
+	if (!rk.is_empty() && !rk_user.is_empty() && !rk_password.is_empty()) {
+		String err = "";
+		valid = has_valid_keystore_credentials(err, rk, rk_user, rk_password, "Release");
+		r_error += err;
+	}
+	return valid;
+}
+
 bool EditorExportPlatformAndroid::has_valid_export_configuration(const Ref<EditorExportPreset> &p_preset, String &r_error, bool &r_missing_templates, bool p_debug) const {
 	String err;
 	bool valid = false;
@@ -2443,6 +2484,13 @@ bool EditorExportPlatformAndroid::has_valid_project_configuration(const Ref<Edit
 	if (_uses_vulkan() && min_sdk_int < VULKAN_MIN_SDK_VERSION) {
 		// Warning only, so don't override `valid`.
 		err += vformat(TTR("\"Min SDK\" should be greater or equal to %d for the \"%s\" renderer."), VULKAN_MIN_SDK_VERSION, current_renderer);
+		err += "\n";
+	}
+
+	String package_name = p_preset->get("package/unique_name");
+	if (package_name.find("$genname") >= 0 && !is_project_name_valid()) {
+		// Warning only, so don't override `valid`.
+		err += vformat(TTR("The project name does not meet the requirement for the package name format and will be updated to \"%s\". Please explicitly specify the package name if needed."), get_valid_basename());
 		err += "\n";
 	}
 
@@ -2782,6 +2830,12 @@ Error EditorExportPlatformAndroid::export_project(const Ref<EditorExportPreset> 
 Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportPreset> &p_preset, bool p_debug, const String &p_path, int export_format, bool should_sign, int p_flags) {
 	ExportNotifier notifier(*this, p_preset, p_debug, p_path, p_flags);
 
+	const String base_dir = p_path.get_base_dir();
+	if (!DirAccess::exists(base_dir)) {
+		add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), vformat(TTR("Target folder does not exist or is inaccessible: \"%s\""), base_dir));
+		return ERR_FILE_BAD_PATH;
+	}
+
 	String src_apk;
 	Error err;
 
@@ -2836,6 +2890,11 @@ Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportP
 		add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Unsupported export format!"));
 		return ERR_UNCONFIGURED;
 	}
+	String err_string;
+	if (!has_valid_username_and_password(p_preset, err_string)) {
+		add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR(err_string));
+		return ERR_UNCONFIGURED;
+	}
 
 	if (use_gradle_build) {
 		print_verbose("Starting gradle build...");
@@ -2856,7 +2915,10 @@ Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportP
 		}
 		const String assets_directory = get_assets_directory(p_preset, export_format);
 		String sdk_path = EDITOR_GET("export/android/android_sdk_path");
-		ERR_FAIL_COND_V_MSG(sdk_path.is_empty(), ERR_UNCONFIGURED, "Android SDK path must be configured in Editor Settings at 'export/android/android_sdk_path'.");
+		if (sdk_path.is_empty()) {
+			add_message(EXPORT_MESSAGE_ERROR, TTR("Export"), TTR("Android SDK path must be configured in Editor Settings at 'export/android/android_sdk_path'."));
+			return ERR_UNCONFIGURED;
+		}
 		print_verbose("Android sdk path: " + sdk_path);
 
 		// TODO: should we use "package/name" or "application/config/name"?
@@ -3106,10 +3168,6 @@ Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportP
 		}
 	}
 
-	if (!DirAccess::exists(p_path.get_base_dir())) {
-		return ERR_FILE_BAD_PATH;
-	}
-
 	Ref<FileAccess> io_fa;
 	zlib_filefunc_def io = zipio_create_io(&io_fa);
 
@@ -3302,10 +3360,6 @@ Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportP
 	zipClose(unaligned_apk, nullptr);
 	unzClose(pkg);
 
-	if (err != OK) {
-		CLEANUP_AND_RETURN(err);
-	}
-
 	// Let's zip-align (must be done before signing)
 
 	static const int ZIP_ALIGNMENT = 4;
@@ -3392,6 +3446,7 @@ Error EditorExportPlatformAndroid::export_project_helper(const Ref<EditorExportP
 		// file will invalidate the signature.
 		err = sign_apk(p_preset, p_debug, p_path, ep);
 		if (err != OK) {
+			// Message is supplied by the subroutine method.
 			CLEANUP_AND_RETURN(err);
 		}
 	}

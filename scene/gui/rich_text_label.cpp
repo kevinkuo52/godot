@@ -1771,7 +1771,7 @@ void RichTextLabel::_scroll_changed(double) {
 		return;
 	}
 
-	if (scroll_follow && vscroll->get_value() >= (vscroll->get_max() - vscroll->get_page())) {
+	if (scroll_follow && vscroll->get_value() >= (vscroll->get_max() - Math::round(vscroll->get_page()))) {
 		scroll_following = true;
 	} else {
 		scroll_following = false;
@@ -2805,7 +2805,7 @@ void RichTextLabel::_thread_function(void *p_userdata) {
 	set_current_thread_safe_for_nodes(true);
 	_process_line_caches();
 	updating.store(false);
-	call_deferred(SNAME("thread_end"));
+	callable_mp(this, &RichTextLabel::_thread_end).call_deferred();
 }
 
 void RichTextLabel::_thread_end() {
@@ -3120,6 +3120,8 @@ void RichTextLabel::_add_item(Item *p_item, bool p_enter, bool p_ensure_newline)
 		ItemText *t = static_cast<ItemText *>(p_item);
 		current_char_ofs += t->text.length();
 	} else if (p_item->type == ITEM_IMAGE) {
+		current_char_ofs++;
+	} else if (p_item->type == ITEM_NEWLINE) {
 		current_char_ofs++;
 	}
 
@@ -4530,7 +4532,7 @@ void RichTextLabel::append_text(const String &p_bbcode) {
 
 				if (subtag_a.size() == 2) {
 					if (subtag_a[0] == "font" || subtag_a[0] == "f") {
-						String fnt = subtag_a[1];
+						const String &fnt = subtag_a[1];
 						Ref<Font> font = ResourceLoader::load(fnt, "Font");
 						if (font.is_valid()) {
 							f = font;
@@ -4774,7 +4776,7 @@ void RichTextLabel::append_text(const String &p_bbcode) {
 
 				if (subtag_a.size() == 2) {
 					if (subtag_a[0] == "name" || subtag_a[0] == "n") {
-						String fnt = subtag_a[1];
+						const String &fnt = subtag_a[1];
 						Ref<Font> font_data = ResourceLoader::load(fnt, "Font");
 						if (font_data.is_valid()) {
 							font = font_data;
@@ -5943,8 +5945,6 @@ void RichTextLabel::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("is_menu_visible"), &RichTextLabel::is_menu_visible);
 	ClassDB::bind_method(D_METHOD("menu_option", "option"), &RichTextLabel::menu_option);
 
-	ClassDB::bind_method(D_METHOD("_thread_end"), &RichTextLabel::_thread_end);
-
 #ifndef DISABLE_DEPRECATED
 	ClassDB::bind_compatibility_method(D_METHOD("push_font", "font", "font_size"), &RichTextLabel::push_font);
 	ClassDB::bind_compatibility_method(D_METHOD("set_table_column_expand", "column", "expand", "ratio"), &RichTextLabel::set_table_column_expand);
@@ -6329,11 +6329,9 @@ Ref<RichTextEffect> RichTextLabel::_get_custom_effect_by_code(String p_bbcode_id
 Dictionary RichTextLabel::parse_expressions_for_values(Vector<String> p_expressions) {
 	Dictionary d;
 	for (int i = 0; i < p_expressions.size(); i++) {
-		String expression = p_expressions[i];
-
 		Array a;
-		Vector<String> parts = expression.split("=", true);
-		String key = parts[0];
+		Vector<String> parts = p_expressions[i].split("=", true);
+		const String &key = parts[0];
 		if (parts.size() != 2) {
 			return d;
 		}
