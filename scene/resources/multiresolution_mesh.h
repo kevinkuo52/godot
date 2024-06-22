@@ -26,7 +26,7 @@ class MultiresolutionMesh : public Mesh {
 };
 
 
-
+////////////// this section NOT USED - just notes for myself for learning //////////////////////////
 class SymetricMatrix {
 public:
 	// Constructor
@@ -102,6 +102,7 @@ public:
 
 	double m[10];
 };
+/////////////////////////////////////////////////////////////////////////////////////////
 
 struct VGNode {
 	Vector<Vector3> vertices;
@@ -172,7 +173,8 @@ public:
 	int to_compressed_storage_format(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices, int &o_xadj, int &o_adjncy );
 	void add_adj_pair(HashMap<int32_t, PackedInt32Array> &p_adj_graph, int32_t index_a, int32_t index_b);
 
-	// Simplify
+	/////////////////// Simplify - NOT used - just notes for myself for learning //////////////////////
+	/*
 	PackedInt32Array simplify_by_lod(Vector<Vector3> &p_verticies, PackedInt32Array &p_indices); 
 	void simplify_by_quadric_edge_collapse(int target_count, double agressiveness = 7);
 	bool flipped(Vector3 p, int i0, int i1, const Vertex &v0, const Vertex &v1, Vector<int> &deleted);
@@ -181,6 +183,8 @@ public:
 	void compact_mesh();
 	double vertex_error(SymetricMatrix q, double x, double y, double z);
 	double calculate_error(int id_v1, int id_v2, Vector3 &p_result);
+	*/
+	////////////////////////////////////////////////////////////////////////////////////////////
 };
 
 
