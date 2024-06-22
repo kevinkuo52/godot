@@ -9,6 +9,8 @@
 
 //#include "thirdparty/METIS/include/metis.h"
 
+// Might put this in a module instead
+
 void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Vector<Vector3> &p_vertices, PackedInt32Array &p_indices) {
 	DAG dag;
 	dag.levels.append(Vector<VGNode>{});

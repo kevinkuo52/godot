@@ -19,6 +19,7 @@ class ConvexPolygonShape3D;
 class MeshConvexDecompositionSettings;
 class Shape3D;
 
+// Might put this in a module instead
 class MultiresolutionMesh : public Mesh {
 	GDCLASS(MultiresolutionMesh, Mesh);
 
