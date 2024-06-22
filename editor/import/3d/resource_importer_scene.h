@@ -219,6 +219,7 @@ class ResourceImporterScene : public ResourceImporter {
 	void _replace_owner(Node *p_node, Node *p_scene, Node *p_new_owner);
 	Node *_generate_meshes(Node *p_node, const Dictionary &p_mesh_data, bool p_generate_lods, bool p_create_shadow_meshes, LightBakeMode p_light_bake_mode, float p_lightmap_texel_size, const Vector<uint8_t> &p_src_lightmap_cache, Vector<Vector<uint8_t>> &r_lightmap_caches);
 	void _add_shapes(Node *p_node, const Vector<Ref<Shape3D>> &p_shapes);
+	void _copy_meta(Object *p_src_object, Object *p_dst_object);
 
 	enum AnimationImportTracks {
 		ANIMATION_IMPORT_TRACKS_IF_PRESENT,
@@ -323,7 +324,7 @@ public:
 template <typename M>
 Vector<Ref<Shape3D>> ResourceImporterScene::get_collision_shapes(const Ref<ImporterMesh> &p_mesh, const M &p_options, float p_applied_root_scale) {
 	ERR_FAIL_COND_V(p_mesh.is_null(), Vector<Ref<Shape3D>>());
-	ShapeType generate_shape_type = SHAPE_TYPE_DECOMPOSE_CONVEX;
+	ShapeType generate_shape_type = SHAPE_TYPE_TRIMESH;
 	if (p_options.has(SNAME("physics/shape_type"))) {
 		generate_shape_type = (ShapeType)p_options[SNAME("physics/shape_type")].operator int();
 	}
@@ -481,7 +482,7 @@ template <typename M>
 Transform3D ResourceImporterScene::get_collision_shapes_transform(const M &p_options) {
 	Transform3D transform;
 
-	ShapeType generate_shape_type = SHAPE_TYPE_DECOMPOSE_CONVEX;
+	ShapeType generate_shape_type = SHAPE_TYPE_TRIMESH;
 	if (p_options.has(SNAME("physics/shape_type"))) {
 		generate_shape_type = (ShapeType)p_options[SNAME("physics/shape_type")].operator int();
 	}

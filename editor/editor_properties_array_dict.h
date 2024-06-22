@@ -37,6 +37,7 @@
 
 class Button;
 class EditorSpinSlider;
+class MarginContainer;
 
 class EditorPropertyArrayObject : public RefCounted {
 	GDCLASS(EditorPropertyArrayObject, RefCounted);
@@ -48,6 +49,10 @@ protected:
 	bool _get(const StringName &p_name, Variant &r_ret) const;
 
 public:
+	enum {
+		NOT_CHANGING_TYPE = -1,
+	};
+
 	void set_array(const Variant &p_array);
 	Variant get_array();
 
@@ -67,7 +72,8 @@ protected:
 
 public:
 	enum {
-		NEW_KEY_INDEX = -2,
+		NOT_CHANGING_TYPE = -3,
+		NEW_KEY_INDEX,
 		NEW_VALUE_INDEX,
 	};
 
@@ -110,9 +116,9 @@ class EditorPropertyArray : public EditorProperty {
 
 	int page_length = 20;
 	int page_index = 0;
-	int changing_type_index;
+	int changing_type_index = EditorPropertyArrayObject::NOT_CHANGING_TYPE;
 	Button *edit = nullptr;
-	MarginContainer *container = nullptr;
+	PanelContainer *container = nullptr;
 	VBoxContainer *property_vbox = nullptr;
 	EditorSpinSlider *size_slider = nullptr;
 	Button *button_add_item = nullptr;
@@ -134,6 +140,8 @@ class EditorPropertyArray : public EditorProperty {
 	void _reorder_button_down(int p_index);
 	void _reorder_button_up();
 	void _create_new_property_slot();
+
+	Node *get_base_node();
 
 protected:
 	Ref<EditorPropertyArrayObject> object;
@@ -162,6 +170,7 @@ protected:
 public:
 	void setup(Variant::Type p_array_type, const String &p_hint_string = "");
 	virtual void update_property() override;
+	virtual bool is_colored(ColorationMode p_mode) override;
 	EditorPropertyArray();
 };
 
@@ -202,9 +211,9 @@ class EditorPropertyDictionary : public EditorProperty {
 	Ref<EditorPropertyDictionaryObject> object;
 	int page_length = 20;
 	int page_index = 0;
-	int changing_type_index;
+	int changing_type_index = EditorPropertyDictionaryObject::NOT_CHANGING_TYPE;
 	Button *edit = nullptr;
-	MarginContainer *container = nullptr;
+	PanelContainer *container = nullptr;
 	VBoxContainer *property_vbox = nullptr;
 	PanelContainer *add_panel = nullptr;
 	EditorSpinSlider *size_sliderv = nullptr;
@@ -230,6 +239,7 @@ protected:
 public:
 	void setup(PropertyHint p_hint);
 	virtual void update_property() override;
+	virtual bool is_colored(ColorationMode p_mode) override;
 	EditorPropertyDictionary();
 };
 

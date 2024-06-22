@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #include "animation_library_editor.h"
+
 #include "editor/editor_node.h"
 #include "editor/editor_settings.h"
 #include "editor/editor_string_names.h"
@@ -75,7 +76,7 @@ void AnimationLibraryEditor::_add_library_validate(const String &p_name) {
 	}
 
 	if (error != "") {
-		add_library_validate->add_theme_color_override("font_color", get_theme_color(SNAME("error_color"), EditorStringName(Editor)));
+		add_library_validate->add_theme_color_override(SceneStringName(font_color), get_theme_color(SNAME("error_color"), EditorStringName(Editor)));
 		add_library_validate->set_text(error);
 		add_library_dialog->get_ok_button()->set_disabled(true);
 	} else {
@@ -88,7 +89,7 @@ void AnimationLibraryEditor::_add_library_validate(const String &p_name) {
 				add_library_validate->set_text(TTR("Library name is valid."));
 			}
 		}
-		add_library_validate->add_theme_color_override("font_color", get_theme_color(SNAME("success_color"), EditorStringName(Editor)));
+		add_library_validate->add_theme_color_override(SceneStringName(font_color), get_theme_color(SNAME("success_color"), EditorStringName(Editor)));
 		add_library_dialog->get_ok_button()->set_disabled(false);
 	}
 }
@@ -797,13 +798,13 @@ AnimationLibraryEditor::AnimationLibraryEditor() {
 	VBoxContainer *dialog_vb = memnew(VBoxContainer);
 	add_library_name = memnew(LineEdit);
 	dialog_vb->add_child(add_library_name);
-	add_library_name->connect("text_changed", callable_mp(this, &AnimationLibraryEditor::_add_library_validate));
+	add_library_name->connect(SceneStringName(text_changed), callable_mp(this, &AnimationLibraryEditor::_add_library_validate));
 	add_child(add_library_dialog);
 
 	add_library_validate = memnew(Label);
 	dialog_vb->add_child(add_library_validate);
 	add_library_dialog->add_child(dialog_vb);
-	add_library_dialog->connect("confirmed", callable_mp(this, &AnimationLibraryEditor::_add_library_confirm));
+	add_library_dialog->connect(SceneStringName(confirmed), callable_mp(this, &AnimationLibraryEditor::_add_library_confirm));
 	add_library_dialog->register_text_enter(add_library_name);
 
 	VBoxContainer *vb = memnew(VBoxContainer);
@@ -811,11 +812,11 @@ AnimationLibraryEditor::AnimationLibraryEditor() {
 	hb->add_spacer(true);
 	new_library_button = memnew(Button(TTR("New Library")));
 	new_library_button->set_tooltip_text(TTR("Create new empty animation library."));
-	new_library_button->connect("pressed", callable_mp(this, &AnimationLibraryEditor::_add_library));
+	new_library_button->connect(SceneStringName(pressed), callable_mp(this, &AnimationLibraryEditor::_add_library));
 	hb->add_child(new_library_button);
 	load_library_button = memnew(Button(TTR("Load Library")));
 	load_library_button->set_tooltip_text(TTR("Load animation library from disk."));
-	load_library_button->connect("pressed", callable_mp(this, &AnimationLibraryEditor::_load_library));
+	load_library_button->connect(SceneStringName(pressed), callable_mp(this, &AnimationLibraryEditor::_load_library));
 	hb->add_child(load_library_button);
 	vb->add_child(hb);
 	tree = memnew(Tree);
@@ -838,7 +839,7 @@ AnimationLibraryEditor::AnimationLibraryEditor() {
 
 	file_popup = memnew(PopupMenu);
 	add_child(file_popup);
-	file_popup->connect("id_pressed", callable_mp(this, &AnimationLibraryEditor::_file_popup_selected));
+	file_popup->connect(SceneStringName(id_pressed), callable_mp(this, &AnimationLibraryEditor::_file_popup_selected));
 
 	add_child(vb);
 

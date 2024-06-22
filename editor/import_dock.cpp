@@ -188,10 +188,22 @@ void ImportDock::_update_options(const String &p_path, const Ref<ConfigFile> &p_
 	params->checked.clear();
 	params->base_options_path = p_path;
 
+	HashMap<StringName, Variant> import_options;
+	if (p_config.is_valid() && p_config->has_section("params")) {
+		List<String> section_keys;
+		p_config->get_section_keys("params", &section_keys);
+		for (const String &section_key : section_keys) {
+			import_options[section_key] = p_config->get_value("params", section_key);
+		}
+		if (params->importer.is_valid()) {
+			params->importer->handle_compatibility_options(import_options);
+		}
+	}
+
 	for (const ResourceImporter::ImportOption &E : options) {
 		params->properties.push_back(E.option);
-		if (p_config.is_valid() && p_config->has_section_key("params", E.option.name)) {
-			params->values[E.option.name] = p_config->get_value("params", E.option.name);
+		if (p_config.is_valid() && import_options.has(E.option.name)) {
+			params->values[E.option.name] = import_options[E.option.name];
 		} else {
 			params->values[E.option.name] = E.default_value;
 		}
@@ -200,7 +212,8 @@ void ImportDock::_update_options(const String &p_path, const Ref<ConfigFile> &p_
 	params->update();
 	_update_preset_menu();
 
-	if (params->importer.is_valid() && params->paths.size() == 1 && params->importer->has_advanced_options()) {
+	bool was_imported = p_config.is_valid() && p_config->get_value("remap", "importer") != "skip" && p_config->get_value("remap", "importer") != "keep";
+	if (was_imported && params->importer.is_valid() && params->paths.size() == 1 && params->importer->has_advanced_options()) {
 		advanced->show();
 		advanced_spacer->show();
 	} else {
@@ -508,6 +521,18 @@ static bool _find_owners(EditorFileSystemDirectory *efsd, const String &p_path) 
 	return false;
 }
 
+void ImportDock::_reimport_pressed() {
+	_reimport_attempt();
+
+	if (params->importer.is_valid() && params->paths.size() == 1 && params->importer->has_advanced_options()) {
+		advanced->show();
+		advanced_spacer->show();
+	} else {
+		advanced->hide();
+		advanced_spacer->hide();
+	}
+}
+
 void ImportDock::_reimport_attempt() {
 	bool used_in_resources = false;
 
@@ -528,7 +553,7 @@ void ImportDock::_reimport_attempt() {
 		ERR_CONTINUE(err != OK);
 
 		String imported_with = config->get_value("remap", "importer");
-		if (imported_with != importer_name) {
+		if (imported_with != importer_name && imported_with != "keep" && imported_with != "skip") {
 			Ref<Resource> resource = ResourceLoader::load(params->paths[i]);
 			if (resource.is_valid()) {
 				need_cleanup.push_back(params->paths[i]);
@@ -575,7 +600,10 @@ void ImportDock::_reimport_and_cleanup() {
 
 	for (const String &path : need_cleanup) {
 		Ref<Resource> old_res = old_resources[path];
-		Ref<Resource> new_res = ResourceLoader::load(path);
+		Ref<Resource> new_res;
+		if (params->importer.is_valid()) {
+			new_res = ResourceLoader::load(path);
+		}
 
 		for (int i = 0; i < EditorNode::get_editor_data().get_edited_scene_count(); i++) {
 			Node *edited_scene_root = EditorNode::get_editor_data().get_edited_scene_root(i);
@@ -692,13 +720,13 @@ void ImportDock::_notification(int p_what) {
 	switch (p_what) {
 		case EditorSettings::NOTIFICATION_EDITOR_SETTINGS_CHANGED: {
 			if (EditorThemeManager::is_generated_theme_outdated()) {
-				imported->add_theme_style_override("normal", get_theme_stylebox(SNAME("normal"), SNAME("LineEdit")));
+				imported->add_theme_style_override(CoreStringName(normal), get_theme_stylebox(CoreStringName(normal), SNAME("LineEdit")));
 			}
 		} break;
 
 		case NOTIFICATION_ENTER_TREE: {
 			import_opts->edit(params);
-			label_warning->add_theme_color_override("font_color", get_theme_color(SNAME("warning_color"), EditorStringName(Editor)));
+			label_warning->add_theme_color_override(SceneStringName(font_color), get_theme_color(SNAME("warning_color"), EditorStringName(Editor)));
 		} break;
 	}
 }
@@ -711,12 +739,12 @@ void ImportDock::_set_dirty(bool p_dirty) {
 	if (p_dirty) {
 		// Add a dirty marker to notify the user that they should reimport the selected resource to see changes.
 		import->set_text(TTR("Reimport") + " (*)");
-		import->add_theme_color_override("font_color", get_theme_color(SNAME("warning_color"), EditorStringName(Editor)));
+		import->add_theme_color_override(SceneStringName(font_color), get_theme_color(SNAME("warning_color"), EditorStringName(Editor)));
 		import->set_tooltip_text(TTR("You have pending changes that haven't been applied yet. Click Reimport to apply changes made to the import options.\nSelecting another resource in the FileSystem dock without clicking Reimport first will discard changes made in the Import dock."));
 	} else {
 		// Remove the dirty marker on the Reimport button.
 		import->set_text(TTR("Reimport"));
-		import->remove_theme_color_override("font_color");
+		import->remove_theme_color_override(SceneStringName(font_color));
 		import->set_tooltip_text("");
 	}
 }
@@ -749,7 +777,7 @@ ImportDock::ImportDock() {
 	content->hide();
 
 	imported = memnew(Label);
-	imported->add_theme_style_override("normal", EditorNode::get_singleton()->get_editor_theme()->get_stylebox(SNAME("normal"), SNAME("LineEdit")));
+	imported->add_theme_style_override(CoreStringName(normal), EditorNode::get_singleton()->get_editor_theme()->get_stylebox(CoreStringName(normal), SNAME("LineEdit")));
 	imported->set_clip_text(true);
 	content->add_child(imported);
 	HBoxContainer *hb = memnew(HBoxContainer);
@@ -759,7 +787,7 @@ ImportDock::ImportDock() {
 	import_as->set_fit_to_longest_item(false);
 	import_as->set_text_overrun_behavior(TextServer::OVERRUN_TRIM_ELLIPSIS);
 	import_as->set_h_size_flags(SIZE_EXPAND_FILL);
-	import_as->connect("item_selected", callable_mp(this, &ImportDock::_importer_selected));
+	import_as->connect(SceneStringName(item_selected), callable_mp(this, &ImportDock::_importer_selected));
 	hb->add_child(import_as);
 	import_as->set_h_size_flags(SIZE_EXPAND_FILL);
 	preset = memnew(MenuButton);
@@ -782,7 +810,7 @@ ImportDock::ImportDock() {
 	import = memnew(Button);
 	import->set_text(TTR("Reimport"));
 	import->set_disabled(true);
-	import->connect("pressed", callable_mp(this, &ImportDock::_reimport_attempt));
+	import->connect(SceneStringName(pressed), callable_mp(this, &ImportDock::_reimport_pressed));
 	if (!DisplayServer::get_singleton()->get_swap_cancel_ok()) {
 		advanced_spacer = hb->add_spacer();
 		advanced = memnew(Button);
@@ -802,11 +830,11 @@ ImportDock::ImportDock() {
 
 	advanced->hide();
 	advanced_spacer->hide();
-	advanced->connect("pressed", callable_mp(this, &ImportDock::_advanced_options));
+	advanced->connect(SceneStringName(pressed), callable_mp(this, &ImportDock::_advanced_options));
 
 	reimport_confirm = memnew(ConfirmationDialog);
 	content->add_child(reimport_confirm);
-	reimport_confirm->connect("confirmed", callable_mp(this, &ImportDock::_reimport_and_cleanup));
+	reimport_confirm->connect(SceneStringName(confirmed), callable_mp(this, &ImportDock::_reimport_and_cleanup));
 
 	VBoxContainer *vbc_confirm = memnew(VBoxContainer());
 	cleanup_warning = memnew(Label(TTR("The imported resource is currently loaded. All instances will be replaced and undo history will be cleared.")));

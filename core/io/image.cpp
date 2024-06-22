@@ -521,7 +521,7 @@ void Image::convert(Format p_new_format) {
 	// Includes the main image.
 	const int mipmap_count = get_mipmap_count() + 1;
 
-	if (format > FORMAT_RGBE9995 || p_new_format > FORMAT_RGBE9995) {
+	if (Image::is_format_compressed(format) || Image::is_format_compressed(p_new_format)) {
 		ERR_FAIL_MSG("Cannot convert to <-> from compressed formats. Use compress() and decompress() instead.");
 
 	} else if (format > FORMAT_RGBA8 || p_new_format > FORMAT_RGBA8) {
@@ -1662,7 +1662,7 @@ int Image::_get_dst_image_size(int p_width, int p_height, Format p_format, int &
 }
 
 bool Image::_can_modify(Format p_format) const {
-	return p_format <= FORMAT_RGBE9995;
+	return !Image::is_format_compressed(p_format);
 }
 
 template <typename Component, int CC, bool renormalize,
@@ -2616,7 +2616,11 @@ int Image::get_image_mipmap_offset_and_dimensions(int p_width, int p_height, For
 }
 
 bool Image::is_compressed() const {
-	return format > FORMAT_RGBE9995;
+	return is_format_compressed(format);
+}
+
+bool Image::is_format_compressed(Format p_format) {
+	return p_format > FORMAT_RGBE9995;
 }
 
 Error Image::decompress() {
@@ -3308,7 +3312,7 @@ uint8_t *Image::ptrw() {
 	return data.ptrw();
 }
 
-int64_t Image::data_size() const {
+int64_t Image::get_data_size() const {
 	return data.size();
 }
 
@@ -3423,6 +3427,7 @@ void Image::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("has_mipmaps"), &Image::has_mipmaps);
 	ClassDB::bind_method(D_METHOD("get_format"), &Image::get_format);
 	ClassDB::bind_method(D_METHOD("get_data"), &Image::get_data);
+	ClassDB::bind_method(D_METHOD("get_data_size"), &Image::get_data_size);
 
 	ClassDB::bind_method(D_METHOD("convert", "format"), &Image::convert);
 
@@ -3439,7 +3444,10 @@ void Image::_bind_methods() {
 	ClassDB::bind_method(D_METHOD("generate_mipmaps", "renormalize"), &Image::generate_mipmaps, DEFVAL(false));
 	ClassDB::bind_method(D_METHOD("clear_mipmaps"), &Image::clear_mipmaps);
 
+#ifndef DISABLE_DEPRECATED
 	ClassDB::bind_static_method("Image", D_METHOD("create", "width", "height", "use_mipmaps", "format"), &Image::create_empty);
+#endif
+	ClassDB::bind_static_method("Image", D_METHOD("create_empty", "width", "height", "use_mipmaps", "format"), &Image::create_empty);
 	ClassDB::bind_static_method("Image", D_METHOD("create_from_data", "width", "height", "use_mipmaps", "format", "data"), &Image::create_from_data);
 	ClassDB::bind_method(D_METHOD("set_data", "width", "height", "use_mipmaps", "format", "data"), &Image::set_data);
 
