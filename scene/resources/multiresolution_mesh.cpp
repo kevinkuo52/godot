@@ -209,11 +209,6 @@ Vector<Group> MultiresolutionMeshBuilder::partition_nodes_to_groups(Vector<VGNod
 	return groups;
 }
 
-
-
-
-
-
 VGNode MultiresolutionMeshBuilder::merge_nodes(const Vector<VGNode*> &p_nodes) {
 	VGNode merged_node;
 	for (auto &node : p_nodes) {
@@ -236,346 +231,345 @@ void MultiresolutionMeshBuilder::connect_all_children_to_all_parents(Vector<VGNo
 	}
 }
 
+// For now just copied
+PackedInt32Array MultiresolutionMeshBuilder::simplify_by_lod(Vector<Vector3> &p_verticies, PackedInt32Array &p_indices) {
+		Vector<Vector3> _vertices = p_verticies;
+		PackedInt32Array _indices = p_indices;
+		Vector<Vector3> normals;
 
-////////////////// BELOW NOT USED - just notes for myself for learning ////////////////////////////////////////////////////// 
+		unsigned int index_count = _indices.size();
+		unsigned int vertex_count = _vertices.size();
 
-// PackedInt32Array MultiresolutionMeshBuilder::simplify_by_lod(Vector<Vector3> &p_verticies, PackedInt32Array &p_indices) {
-// 		Vector<Vector3> _vertices = p_verticies;
-// 		PackedInt32Array _indices = p_indices;
-// 		Vector<Vector3> normals;
+		const Vector3 *vertices_ptr = _vertices.ptr();
+		const int *indices_ptr = _indices.ptr();
 
-// 		unsigned int index_count = _indices.size();
-// 		unsigned int vertex_count = _vertices.size();
+			normals.resize(index_count);
+			Vector3 *n_ptr = normals.ptrw();
+			for (unsigned int j = 0; j < index_count; j += 3) {
+				const Vector3 &v0 = vertices_ptr[indices_ptr[j + 0]];
+				const Vector3 &v1 = vertices_ptr[indices_ptr[j + 1]];
+				const Vector3 &v2 = vertices_ptr[indices_ptr[j + 2]];
+				Vector3 n = vec3_cross(v0 - v2, v0 - v1).normalized();
+				n_ptr[j + 0] = n;
+				n_ptr[j + 1] = n;
+				n_ptr[j + 2] = n;
+			}
+		float normal_merge_threshold = Math::cos(Math::deg_to_rad(normal_merge_angle));
+		float normal_pre_split_threshold = Math::cos(Math::deg_to_rad(MIN(180.0f, normal_split_angle * 2.0f)));
+		float normal_split_threshold = Math::cos(Math::deg_to_rad(normal_split_angle));
+		const Vector3 *normals_ptr = normals.ptr();
 
-// 		const Vector3 *vertices_ptr = _vertices.ptr();
-// 		const int *indices_ptr = _indices.ptr();
+		HashMap<Vector3, LocalVector<Pair<int, int>>> unique_vertices;
 
-// 			normals.resize(index_count);
-// 			Vector3 *n_ptr = normals.ptrw();
-// 			for (unsigned int j = 0; j < index_count; j += 3) {
-// 				const Vector3 &v0 = vertices_ptr[indices_ptr[j + 0]];
-// 				const Vector3 &v1 = vertices_ptr[indices_ptr[j + 1]];
-// 				const Vector3 &v2 = vertices_ptr[indices_ptr[j + 2]];
-// 				Vector3 n = vec3_cross(v0 - v2, v0 - v1).normalized();
-// 				n_ptr[j + 0] = n;
-// 				n_ptr[j + 1] = n;
-// 				n_ptr[j + 2] = n;
-// 			}
-// 		float normal_merge_threshold = Math::cos(Math::deg_to_rad(normal_merge_angle));
-// 		float normal_pre_split_threshold = Math::cos(Math::deg_to_rad(MIN(180.0f, normal_split_angle * 2.0f)));
-// 		float normal_split_threshold = Math::cos(Math::deg_to_rad(normal_split_angle));
-// 		const Vector3 *normals_ptr = normals.ptr();
+		LocalVector<int> vertex_remap;
+		LocalVector<int> vertex_inverse_remap;
+		LocalVector<Vector3> merged_vertices;
+		LocalVector<Vector3> merged_normals;
+		LocalVector<int> merged_normals_counts;
 
-// 		HashMap<Vector3, LocalVector<Pair<int, int>>> unique_vertices;
+		for (unsigned int j = 0; j < vertex_count; j++) {
+			const Vector3 &v = vertices_ptr[j];
+			const Vector3 &n = normals_ptr[j];
 
-// 		LocalVector<int> vertex_remap;
-// 		LocalVector<int> vertex_inverse_remap;
-// 		LocalVector<Vector3> merged_vertices;
-// 		LocalVector<Vector3> merged_normals;
-// 		LocalVector<int> merged_normals_counts;
+			HashMap<Vector3, LocalVector<Pair<int, int>>>::Iterator E = unique_vertices.find(v);
 
-// 		for (unsigned int j = 0; j < vertex_count; j++) {
-// 			const Vector3 &v = vertices_ptr[j];
-// 			const Vector3 &n = normals_ptr[j];
+			if (E) {
+				const LocalVector<Pair<int, int>> &close_verts = E->value;
 
-// 			HashMap<Vector3, LocalVector<Pair<int, int>>>::Iterator E = unique_vertices.find(v);
+				bool found = false;
+				for (const Pair<int, int> &idx : close_verts) {
+					//ERR_FAIL_INDEX(idx.second, normals.size());
+					bool is_normals_close = normals[idx.second].dot(n) > normal_merge_threshold;
+					if (is_normals_close) {
+						vertex_remap.push_back(idx.first);
+						merged_normals[idx.first] += normals[idx.second];
+						merged_normals_counts[idx.first]++;
+						found = true;
+						break;
+					}
+				}
 
-// 			if (E) {
-// 				const LocalVector<Pair<int, int>> &close_verts = E->value;
+				if (!found) {
+					int vcount = merged_vertices.size();
+					unique_vertices[v].push_back(Pair<int, int>(vcount, j));
+					vertex_inverse_remap.push_back(j);
+					merged_vertices.push_back(v);
+					vertex_remap.push_back(vcount);
+					merged_normals.push_back(normals_ptr[j]);
+					merged_normals_counts.push_back(1);
+				}
+			} else {
+				int vcount = merged_vertices.size();
+				unique_vertices[v] = LocalVector<Pair<int, int>>();
+				unique_vertices[v].push_back(Pair<int, int>(vcount, j));
+				vertex_inverse_remap.push_back(j);
+				merged_vertices.push_back(v);
+				vertex_remap.push_back(vcount);
+				merged_normals.push_back(normals_ptr[j]);
+				merged_normals_counts.push_back(1);
+			}
+		}
 
-// 				bool found = false;
-// 				for (const Pair<int, int> &idx : close_verts) {
-// 					//ERR_FAIL_INDEX(idx.second, normals.size());
-// 					bool is_normals_close = normals[idx.second].dot(n) > normal_merge_threshold;
-// 					if (is_normals_close) {
-// 						vertex_remap.push_back(idx.first);
-// 						merged_normals[idx.first] += normals[idx.second];
-// 						merged_normals_counts[idx.first]++;
-// 						found = true;
-// 						break;
-// 					}
-// 				}
+		LocalVector<int> merged_indices;
+		merged_indices.resize(index_count);
+		for (unsigned int j = 0; j < index_count; j++) {
+			merged_indices[j] = vertex_remap[_indices[j]];
+		}
 
-// 				if (!found) {
-// 					int vcount = merged_vertices.size();
-// 					unique_vertices[v].push_back(Pair<int, int>(vcount, j));
-// 					vertex_inverse_remap.push_back(j);
-// 					merged_vertices.push_back(v);
-// 					vertex_remap.push_back(vcount);
-// 					merged_normals.push_back(normals_ptr[j]);
-// 					merged_normals_counts.push_back(1);
-// 				}
-// 			} else {
-// 				int vcount = merged_vertices.size();
-// 				unique_vertices[v] = LocalVector<Pair<int, int>>();
-// 				unique_vertices[v].push_back(Pair<int, int>(vcount, j));
-// 				vertex_inverse_remap.push_back(j);
-// 				merged_vertices.push_back(v);
-// 				vertex_remap.push_back(vcount);
-// 				merged_normals.push_back(normals_ptr[j]);
-// 				merged_normals_counts.push_back(1);
-// 			}
-// 		}
+		unsigned int merged_vertex_count = merged_vertices.size();
+		const Vector3 *merged_vertices_ptr = merged_vertices.ptr();
+		const int32_t *merged_indices_ptr = merged_indices.ptr();
 
-// 		LocalVector<int> merged_indices;
-// 		merged_indices.resize(index_count);
-// 		for (unsigned int j = 0; j < index_count; j++) {
-// 			merged_indices[j] = vertex_remap[_indices[j]];
-// 		}
+		{
+			const int *counts_ptr = merged_normals_counts.ptr();
+			Vector3 *merged_normals_ptrw = merged_normals.ptr();
+			for (unsigned int j = 0; j < merged_vertex_count; j++) {
+				merged_normals_ptrw[j] /= counts_ptr[j];
+			}
+		}
 
-// 		unsigned int merged_vertex_count = merged_vertices.size();
-// 		const Vector3 *merged_vertices_ptr = merged_vertices.ptr();
-// 		const int32_t *merged_indices_ptr = merged_indices.ptr();
+		const float normal_weights[3] = {
+			// Give some weight to normal preservation, may be worth exposing as an import setting
+			2.0f, 2.0f, 2.0f
+		};
 
-// 		{
-// 			const int *counts_ptr = merged_normals_counts.ptr();
-// 			Vector3 *merged_normals_ptrw = merged_normals.ptr();
-// 			for (unsigned int j = 0; j < merged_vertex_count; j++) {
-// 				merged_normals_ptrw[j] /= counts_ptr[j];
-// 			}
-// 		}
+		Vector<float> merged_vertices_f32 = vector3_to_float32_array(merged_vertices_ptr, merged_vertex_count);
+		float scale = SurfaceTool::simplify_scale_func(merged_vertices_f32.ptr(), merged_vertex_count, sizeof(float) * 3);
 
-// 		const float normal_weights[3] = {
-// 			// Give some weight to normal preservation, may be worth exposing as an import setting
-// 			2.0f, 2.0f, 2.0f
-// 		};
+		unsigned int index_target = index_count / 2; // Start with the smallest target, 4 triangles
+		unsigned int last_index_count = 0;
 
-// 		Vector<float> merged_vertices_f32 = vector3_to_float32_array(merged_vertices_ptr, merged_vertex_count);
-// 		float scale = SurfaceTool::simplify_scale_func(merged_vertices_f32.ptr(), merged_vertex_count, sizeof(float) * 3);
+		int split_vertex_count = vertex_count;
+		LocalVector<Vector3> split_vertex_normals;
+		LocalVector<int> split_vertex_indices;
+		split_vertex_normals.reserve(index_count / 3);
+		split_vertex_indices.reserve(index_count / 3);
 
-// 		unsigned int index_target = index_count / 2; // Start with the smallest target, 4 triangles
-// 		unsigned int last_index_count = 0;
+		RandomPCG pcg;
+		pcg.seed(123456789); // Keep seed constant across imports
 
-// 		int split_vertex_count = vertex_count;
-// 		LocalVector<Vector3> split_vertex_normals;
-// 		LocalVector<int> split_vertex_indices;
-// 		split_vertex_normals.reserve(index_count / 3);
-// 		split_vertex_indices.reserve(index_count / 3);
+		Ref<StaticRaycaster> raycaster = StaticRaycaster::create();
+		if (raycaster.is_valid()) {
+			raycaster->add_mesh(_vertices, _indices, 0);
+			raycaster->commit();
+		}
 
-// 		RandomPCG pcg;
-// 		pcg.seed(123456789); // Keep seed constant across imports
+		const float max_mesh_error = FLT_MAX; // We don't want to limit by error, just by index target
+		float mesh_error = 0.0f;
 
-// 		Ref<StaticRaycaster> raycaster = StaticRaycaster::create();
-// 		if (raycaster.is_valid()) {
-// 			raycaster->add_mesh(_vertices, _indices, 0);
-// 			raycaster->commit();
-// 		}
+			PackedInt32Array new_indices;
+			new_indices.resize(index_count);
 
-// 		const float max_mesh_error = FLT_MAX; // We don't want to limit by error, just by index target
-// 		float mesh_error = 0.0f;
+			Vector<float> merged_normals_f32 = vector3_to_float32_array(merged_normals.ptr(), merged_normals.size());
+			const int simplify_options = SurfaceTool::SIMPLIFY_LOCK_BORDER;
 
-// 			PackedInt32Array new_indices;
-// 			new_indices.resize(index_count);
+			size_t new_index_count = SurfaceTool::simplify_with_attrib_func(
+					(unsigned int *)new_indices.ptrw(),
+					(const uint32_t *)merged_indices_ptr, index_count,
+					merged_vertices_f32.ptr(), merged_vertex_count,
+					sizeof(float) * 3, // Vertex stride
+					merged_normals_f32.ptr(),
+					sizeof(float) * 3, // Attribute stride
+					normal_weights, 3,
+					index_target,
+					max_mesh_error,
+					simplify_options,
+					&mesh_error);
 
-// 			Vector<float> merged_normals_f32 = vector3_to_float32_array(merged_normals.ptr(), merged_normals.size());
-// 			const int simplify_options = SurfaceTool::SIMPLIFY_LOCK_BORDER;
+			if (new_index_count < last_index_count * 1.5f) {
+				index_target = index_target * 1.5f;
+				return _indices;
+			}
 
-// 			size_t new_index_count = SurfaceTool::simplify_with_attrib_func(
-// 					(unsigned int *)new_indices.ptrw(),
-// 					(const uint32_t *)merged_indices_ptr, index_count,
-// 					merged_vertices_f32.ptr(), merged_vertex_count,
-// 					sizeof(float) * 3, // Vertex stride
-// 					merged_normals_f32.ptr(),
-// 					sizeof(float) * 3, // Attribute stride
-// 					normal_weights, 3,
-// 					index_target,
-// 					max_mesh_error,
-// 					simplify_options,
-// 					&mesh_error);
+			if (new_index_count == 0 || (new_index_count >= (index_count * 0.75f))) {
+			}
+			if (new_index_count > 5000000) {
+				// This limit theoretically shouldn't be needed, but it's here
+				// as an ad-hoc fix to prevent a crash with complex meshes.
+				// The crash still happens with limit of 6000000, but 5000000 works.
+				// In the future, identify what's causing that crash and fix it.
+				WARN_PRINT("Mesh LOD generation failed for mesh surface 1, mesh is too complex. Some automatic LODs were not generated.");
+				return _indices;
+			}
 
-// 			if (new_index_count < last_index_count * 1.5f) {
-// 				index_target = index_target * 1.5f;
-// 				return _indices;
-// 			}
+			new_indices.resize(new_index_count);
 
-// 			if (new_index_count == 0 || (new_index_count >= (index_count * 0.75f))) {
-// 			}
-// 			if (new_index_count > 5000000) {
-// 				// This limit theoretically shouldn't be needed, but it's here
-// 				// as an ad-hoc fix to prevent a crash with complex meshes.
-// 				// The crash still happens with limit of 6000000, but 5000000 works.
-// 				// In the future, identify what's causing that crash and fix it.
-// 				WARN_PRINT("Mesh LOD generation failed for mesh surface 1, mesh is too complex. Some automatic LODs were not generated.");
-// 				return _indices;
-// 			}
+			LocalVector<LocalVector<int>> vertex_corners;
+			vertex_corners.resize(vertex_count);
+			{
+				int *ptrw = new_indices.ptrw();
+				for (unsigned int j = 0; j < new_index_count; j++) {
+					const int &remapped = vertex_inverse_remap[ptrw[j]];
+					vertex_corners[remapped].push_back(j);
+					ptrw[j] = remapped;
+				}
+			}
 
-// 			new_indices.resize(new_index_count);
+			if (raycaster.is_valid()) {
+				float error_factor = 1.0f / (scale * MAX(mesh_error, 0.15));
+				const float ray_bias = 0.05;
+				float ray_length = ray_bias + mesh_error * scale * 3.0f;
 
-// 			LocalVector<LocalVector<int>> vertex_corners;
-// 			vertex_corners.resize(vertex_count);
-// 			{
-// 				int *ptrw = new_indices.ptrw();
-// 				for (unsigned int j = 0; j < new_index_count; j++) {
-// 					const int &remapped = vertex_inverse_remap[ptrw[j]];
-// 					vertex_corners[remapped].push_back(j);
-// 					ptrw[j] = remapped;
-// 				}
-// 			}
+				Vector<StaticRaycaster::Ray> rays;
+				LocalVector<Vector2> ray_uvs;
 
-// 			if (raycaster.is_valid()) {
-// 				float error_factor = 1.0f / (scale * MAX(mesh_error, 0.15));
-// 				const float ray_bias = 0.05;
-// 				float ray_length = ray_bias + mesh_error * scale * 3.0f;
+				int32_t *new_indices_ptr = new_indices.ptrw();
 
-// 				Vector<StaticRaycaster::Ray> rays;
-// 				LocalVector<Vector2> ray_uvs;
+				int current_ray_count = 0;
+				for (unsigned int j = 0; j < new_index_count; j += 3) {
+					const Vector3 &v0 = vertices_ptr[new_indices_ptr[j + 0]];
+					const Vector3 &v1 = vertices_ptr[new_indices_ptr[j + 1]];
+					const Vector3 &v2 = vertices_ptr[new_indices_ptr[j + 2]];
+					Vector3 face_normal = vec3_cross(v0 - v2, v0 - v1);
+					float face_area = face_normal.length(); // Actually twice the face area, since it's the same error_factor on all faces, we don't care
+					if (!Math::is_finite(face_area) || face_area == 0) {
+						WARN_PRINT_ONCE("Ignoring face with non-finite normal in LOD generation.");
+						continue;
+					}
 
-// 				int32_t *new_indices_ptr = new_indices.ptrw();
+					Vector3 dir = face_normal / face_area;
+					int ray_count = CLAMP(5.0 * face_area * error_factor, 16, 64);
 
-// 				int current_ray_count = 0;
-// 				for (unsigned int j = 0; j < new_index_count; j += 3) {
-// 					const Vector3 &v0 = vertices_ptr[new_indices_ptr[j + 0]];
-// 					const Vector3 &v1 = vertices_ptr[new_indices_ptr[j + 1]];
-// 					const Vector3 &v2 = vertices_ptr[new_indices_ptr[j + 2]];
-// 					Vector3 face_normal = vec3_cross(v0 - v2, v0 - v1);
-// 					float face_area = face_normal.length(); // Actually twice the face area, since it's the same error_factor on all faces, we don't care
-// 					if (!Math::is_finite(face_area) || face_area == 0) {
-// 						WARN_PRINT_ONCE("Ignoring face with non-finite normal in LOD generation.");
-// 						continue;
-// 					}
+					rays.resize(current_ray_count + ray_count);
+					StaticRaycaster::Ray *rays_ptr = rays.ptrw();
 
-// 					Vector3 dir = face_normal / face_area;
-// 					int ray_count = CLAMP(5.0 * face_area * error_factor, 16, 64);
+					ray_uvs.resize(current_ray_count + ray_count);
+					Vector2 *ray_uvs_ptr = ray_uvs.ptr();
 
-// 					rays.resize(current_ray_count + ray_count);
-// 					StaticRaycaster::Ray *rays_ptr = rays.ptrw();
+					for (int k = 0; k < ray_count; k++) {
+						float u = pcg.randf();
+						float v = pcg.randf();
 
-// 					ray_uvs.resize(current_ray_count + ray_count);
-// 					Vector2 *ray_uvs_ptr = ray_uvs.ptr();
+						if (u + v >= 1.0f) {
+							u = 1.0f - u;
+							v = 1.0f - v;
+						}
 
-// 					for (int k = 0; k < ray_count; k++) {
-// 						float u = pcg.randf();
-// 						float v = pcg.randf();
+						u = 0.9f * u + 0.05f / 3.0f; // Give barycentric coordinates some padding, we don't want to sample right on the edge
+						v = 0.9f * v + 0.05f / 3.0f; // v = (v - one_third) * 0.95f + one_third;
+						float w = 1.0f - u - v;
 
-// 						if (u + v >= 1.0f) {
-// 							u = 1.0f - u;
-// 							v = 1.0f - v;
-// 						}
+						Vector3 org = v0 * w + v1 * u + v2 * v;
+						org -= dir * ray_bias;
+						rays_ptr[current_ray_count + k] = StaticRaycaster::Ray(org, dir, 0.0f, ray_length);
+						rays_ptr[current_ray_count + k].id = j / 3;
+						ray_uvs_ptr[current_ray_count + k] = Vector2(u, v);
+					}
 
-// 						u = 0.9f * u + 0.05f / 3.0f; // Give barycentric coordinates some padding, we don't want to sample right on the edge
-// 						v = 0.9f * v + 0.05f / 3.0f; // v = (v - one_third) * 0.95f + one_third;
-// 						float w = 1.0f - u - v;
+					current_ray_count += ray_count;
+				}
 
-// 						Vector3 org = v0 * w + v1 * u + v2 * v;
-// 						org -= dir * ray_bias;
-// 						rays_ptr[current_ray_count + k] = StaticRaycaster::Ray(org, dir, 0.0f, ray_length);
-// 						rays_ptr[current_ray_count + k].id = j / 3;
-// 						ray_uvs_ptr[current_ray_count + k] = Vector2(u, v);
-// 					}
+				raycaster->intersect(rays);
 
-// 					current_ray_count += ray_count;
-// 				}
+				LocalVector<Vector3> ray_normals;
+				LocalVector<real_t> ray_normal_weights;
 
-// 				raycaster->intersect(rays);
+				ray_normals.resize(new_index_count);
+				ray_normal_weights.resize(new_index_count);
 
-// 				LocalVector<Vector3> ray_normals;
-// 				LocalVector<real_t> ray_normal_weights;
+				for (unsigned int j = 0; j < new_index_count; j++) {
+					ray_normal_weights[j] = 0.0f;
+				}
 
-// 				ray_normals.resize(new_index_count);
-// 				ray_normal_weights.resize(new_index_count);
+				const StaticRaycaster::Ray *rp = rays.ptr();
+				for (int j = 0; j < rays.size(); j++) {
+					if (rp[j].geomID != 0) { // Ray missed
+						continue;
+					}
 
-// 				for (unsigned int j = 0; j < new_index_count; j++) {
-// 					ray_normal_weights[j] = 0.0f;
-// 				}
+					if (rp[j].normal.normalized().dot(rp[j].dir) > 0.0f) { // Hit a back face.
+						continue;
+					}
 
-// 				const StaticRaycaster::Ray *rp = rays.ptr();
-// 				for (int j = 0; j < rays.size(); j++) {
-// 					if (rp[j].geomID != 0) { // Ray missed
-// 						continue;
-// 					}
+					const float &u = rp[j].u;
+					const float &v = rp[j].v;
+					const float w = 1.0f - u - v;
 
-// 					if (rp[j].normal.normalized().dot(rp[j].dir) > 0.0f) { // Hit a back face.
-// 						continue;
-// 					}
+					const unsigned int &hit_tri_id = rp[j].primID;
+					const unsigned int &orig_tri_id = rp[j].id;
 
-// 					const float &u = rp[j].u;
-// 					const float &v = rp[j].v;
-// 					const float w = 1.0f - u - v;
+					const Vector3 &n0 = normals_ptr[indices_ptr[hit_tri_id * 3 + 0]];
+					const Vector3 &n1 = normals_ptr[indices_ptr[hit_tri_id * 3 + 1]];
+					const Vector3 &n2 = normals_ptr[indices_ptr[hit_tri_id * 3 + 2]];
+					Vector3 normal = n0 * w + n1 * u + n2 * v;
 
-// 					const unsigned int &hit_tri_id = rp[j].primID;
-// 					const unsigned int &orig_tri_id = rp[j].id;
+					Vector2 orig_uv = ray_uvs[j];
+					const real_t orig_bary[3] = { 1.0f - orig_uv.x - orig_uv.y, orig_uv.x, orig_uv.y };
+					for (int k = 0; k < 3; k++) {
+						int idx = orig_tri_id * 3 + k;
+						real_t weight = orig_bary[k];
+						ray_normals[idx] += normal * weight;
+						ray_normal_weights[idx] += weight;
+					}
+				}
 
-// 					const Vector3 &n0 = normals_ptr[indices_ptr[hit_tri_id * 3 + 0]];
-// 					const Vector3 &n1 = normals_ptr[indices_ptr[hit_tri_id * 3 + 1]];
-// 					const Vector3 &n2 = normals_ptr[indices_ptr[hit_tri_id * 3 + 2]];
-// 					Vector3 normal = n0 * w + n1 * u + n2 * v;
+				for (unsigned int j = 0; j < new_index_count; j++) {
+					if (ray_normal_weights[j] < 1.0f) { // Not enough data, the new normal would be just a bad guess
+						ray_normals[j] = Vector3();
+					} else {
+						ray_normals[j] /= ray_normal_weights[j];
+					}
+				}
 
-// 					Vector2 orig_uv = ray_uvs[j];
-// 					const real_t orig_bary[3] = { 1.0f - orig_uv.x - orig_uv.y, orig_uv.x, orig_uv.y };
-// 					for (int k = 0; k < 3; k++) {
-// 						int idx = orig_tri_id * 3 + k;
-// 						real_t weight = orig_bary[k];
-// 						ray_normals[idx] += normal * weight;
-// 						ray_normal_weights[idx] += weight;
-// 					}
-// 				}
+				LocalVector<LocalVector<int>> normal_group_indices;
+				LocalVector<Vector3> normal_group_averages;
+				normal_group_indices.reserve(24);
+				normal_group_averages.reserve(24);
 
-// 				for (unsigned int j = 0; j < new_index_count; j++) {
-// 					if (ray_normal_weights[j] < 1.0f) { // Not enough data, the new normal would be just a bad guess
-// 						ray_normals[j] = Vector3();
-// 					} else {
-// 						ray_normals[j] /= ray_normal_weights[j];
-// 					}
-// 				}
+				for (unsigned int j = 0; j < vertex_count; j++) {
+					const LocalVector<int> &corners = vertex_corners[j];
+					const Vector3 &vertex_normal = normals_ptr[j];
 
-// 				LocalVector<LocalVector<int>> normal_group_indices;
-// 				LocalVector<Vector3> normal_group_averages;
-// 				normal_group_indices.reserve(24);
-// 				normal_group_averages.reserve(24);
+					for (const int &corner_idx : corners) {
+						const Vector3 &ray_normal = ray_normals[corner_idx];
 
-// 				for (unsigned int j = 0; j < vertex_count; j++) {
-// 					const LocalVector<int> &corners = vertex_corners[j];
-// 					const Vector3 &vertex_normal = normals_ptr[j];
+						if (ray_normal.length_squared() < CMP_EPSILON2) {
+							continue;
+						}
 
-// 					for (const int &corner_idx : corners) {
-// 						const Vector3 &ray_normal = ray_normals[corner_idx];
+						bool found = false;
+						for (unsigned int l = 0; l < normal_group_indices.size(); l++) {
+							LocalVector<int> &group_indices = normal_group_indices[l];
+							Vector3 n = normal_group_averages[l] / group_indices.size();
+							if (n.dot(ray_normal) > normal_pre_split_threshold) {
+								found = true;
+								group_indices.push_back(corner_idx);
+								normal_group_averages[l] += ray_normal;
+								break;
+							}
+						}
 
-// 						if (ray_normal.length_squared() < CMP_EPSILON2) {
-// 							continue;
-// 						}
+						if (!found) {
+							normal_group_indices.push_back({ corner_idx });
+							normal_group_averages.push_back(ray_normal);
+						}
+					}
 
-// 						bool found = false;
-// 						for (unsigned int l = 0; l < normal_group_indices.size(); l++) {
-// 							LocalVector<int> &group_indices = normal_group_indices[l];
-// 							Vector3 n = normal_group_averages[l] / group_indices.size();
-// 							if (n.dot(ray_normal) > normal_pre_split_threshold) {
-// 								found = true;
-// 								group_indices.push_back(corner_idx);
-// 								normal_group_averages[l] += ray_normal;
-// 								break;
-// 							}
-// 						}
+					for (unsigned int k = 0; k < normal_group_indices.size(); k++) {
+						LocalVector<int> &group_indices = normal_group_indices[k];
+						Vector3 n = normal_group_averages[k] / group_indices.size();
 
-// 						if (!found) {
-// 							normal_group_indices.push_back({ corner_idx });
-// 							normal_group_averages.push_back(ray_normal);
-// 						}
-// 					}
+						if (vertex_normal.dot(n) < normal_split_threshold) {
+							split_vertex_indices.push_back(j);
+							split_vertex_normals.push_back(n);
+							int new_idx = split_vertex_count++;
+							for (const int &index : group_indices) {
+								new_indices_ptr[index] = new_idx;
+							}
+						}
+					}
 
-// 					for (unsigned int k = 0; k < normal_group_indices.size(); k++) {
-// 						LocalVector<int> &group_indices = normal_group_indices[k];
-// 						Vector3 n = normal_group_averages[k] / group_indices.size();
+					normal_group_indices.clear();
+					normal_group_averages.clear();
+				}
+			}
 
-// 						if (vertex_normal.dot(n) < normal_split_threshold) {
-// 							split_vertex_indices.push_back(j);
-// 							split_vertex_normals.push_back(n);
-// 							int new_idx = split_vertex_count++;
-// 							for (const int &index : group_indices) {
-// 								new_indices_ptr[index] = new_idx;
-// 							}
-// 						}
-// 					}
+			index_target = MAX(new_index_count, index_target) * 2;
+			last_index_count = new_index_count;
+			return new_indices;
+}
 
-// 					normal_group_indices.clear();
-// 					normal_group_averages.clear();
-// 				}
-// 			}
-
-// 			index_target = MAX(new_index_count, index_target) * 2;
-// 			last_index_count = new_index_count;
-// 			return new_indices;
-// }
-
+////////////////////////////////////////// BELOW NOT USED - just notes for myself for learning ////////////////////////////////////////////////////// 
 // /*
 // void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Ref<ImporterMesh> p_mesh, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array) {
 // 	const int surf_count = p_mesh->get_surface_count();
