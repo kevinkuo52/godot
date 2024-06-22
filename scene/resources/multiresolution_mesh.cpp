@@ -5,12 +5,15 @@
 #include "core/math/random_pcg.h"
 #include "core/math/static_raycaster.h"
 #include "scene/resources/surface_tool.h"
+#include "modules/metis_wrapper/include/metis.h"
+
+//#include "thirdparty/METIS/include/metis.h"
 
 void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Vector<Vector3> &p_vertices, PackedInt32Array &p_indices) {
 	DAG dag;
 	dag.levels.append(Vector<VGNode>{});
 	int level_i = 0; 
-	dag.levels.write[level_i] = partition_triangles_to_nodes(p_vertices, p_indices);
+	dag.levels.write[level_i] = partition_triangles_to_nodes(p_vertices, p_indices, p_vertices.size() / node_size );
 
 	// build the dag until the number of nodes in the level becomes one - meaning we built the root node.
 	while (dag.levels[level_i].size() > 1) {
@@ -22,7 +25,7 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Vector<Vector3> &
 			VGNode merged_node = merge_nodes(group.nodes);
 
 			PackedInt32Array simplified_indices	= simplify_by_lod(merged_node.vertices, merged_node.indices);
-			Vector<VGNode> nodes = partition_triangles_to_nodes(merged_node.vertices, simplified_indices);
+			Vector<VGNode> nodes = partition_triangles_to_nodes(merged_node.vertices, simplified_indices, group.nodes.size() / 2);
 			connect_all_children_to_all_parents(nodes, group.nodes);
 			dag.levels.write[level_i + 1].append_array(nodes);
 		}
@@ -31,9 +34,129 @@ void MultiresolutionMeshBuilder::generate_multiresolution_mesh(Vector<Vector3> &
 	}
 }
 
-Vector<VGNode> MultiresolutionMeshBuilder::partition_triangles_to_nodes(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices) {
-	// currently naive version. TODO: use actual graph partitioning algo
+int MultiresolutionMeshBuilder::to_compressed_storage_format(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices, int &o_xadj, int &o_adjncy ){
+	/*
+	HashMap<int32_t, PackedInt32Array> adj_graph;
+
+	int i = 0;
+	for (int i = 0; i < p_indices.size(); i += 3) {
+		add_adj_pair(adj_graph, p_indices[i], p_indices[i + 1]);
+		add_adj_pair(adj_graph, p_indices[i + 1], p_indices[i + 2]);
+		add_adj_pair(adj_graph, p_indices[i + 2], p_indices[i]);
+	}
+	
+	int32_t xadj_val = 0;
+	for (int32_t vertex_i = 0; vertex_i	< p_vertices.size(); vertex_i ++) {
+		o_xadj->append(xadj_val); // starting index of adjncy that stores the adjencies of vertex_i
+		o_adjncy->append_array(adj_graph[vertex_i]);
+		xadj_val += adj_graph[vertex_i].size(); // update starting index of adjncy that stores the adjencies for the NEXT vertex
+		o_xadj->append(xadj_val);
+	}*/
+	return 0;
+}
+
+void MultiresolutionMeshBuilder::add_adj_pair(HashMap<int32_t, PackedInt32Array> &p_adj_graph, int32_t index_a,  int32_t index_b){
+	if (p_adj_graph.has(index_a)){
+		p_adj_graph[index_a].append(index_b);
+	}
+	else {
+		p_adj_graph[index_a] = Vector<int32_t>{ index_b };
+	}
+
+	if (p_adj_graph.has(index_b)){
+		p_adj_graph[index_b].append(index_a);
+	}
+	else {
+		p_adj_graph[index_b] = Vector<int32_t>{ index_a };
+	}
+}
+
+Vector<VGNode> MultiresolutionMeshBuilder::partition_triangles_to_nodes(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices, int32_t p_num_partition) {
+
+	HashMap<int32_t, PackedInt32Array> adj_graph;
+
+	for (int i = 0; i < p_indices.size(); i += 3) {
+		add_adj_pair(adj_graph, p_indices[i], p_indices[i + 1]);
+		add_adj_pair(adj_graph, p_indices[i + 1], p_indices[i + 2]);
+		add_adj_pair(adj_graph, p_indices[i + 2], p_indices[i]);
+	}
+	
+	PackedInt32Array xadj_vec = PackedInt32Array{ 0 };
+	PackedInt32Array adjncy_vec;
+	// setup xadj and adjncy in the compressed storage format specified in the metis lib manual
+	int32_t xadj_val = 0;
+	for (int32_t vertex_i = 0; vertex_i	< p_vertices.size(); vertex_i ++) {
+		//xadj_vec.append(xadj_val); // starting index of adjncy that stores the adjencies of vertex_i
+		adjncy_vec.append_array(adj_graph[vertex_i]);
+		xadj_val += adj_graph[vertex_i].size(); // update starting index of adjncy that stores the adjencies for the NEXT vertex
+		xadj_vec.append(xadj_val);
+	}
+
+	idx_t nvtxs = p_vertices.size();
+	idx_t ncon = 1;
+	//idx_t xadj = (int32_t *)&xadj_vec[0];
+	//idx_t adjncy;
+	//idx_t vwgt;
+	//idx_t vsize;
+	//idx_t adjwgt = nullptr; 
+	//idx_t nparts;
+	//real_t tpwgts;
+	//real_t ubvec;
+	idx_t options[METIS_NOPTIONS];
+	METIS_SetDefaultOptions(options);
+	options[METIS_OPTION_NUMBERING] = 0;
+	options[METIS_OPTION_UFACTOR] = 200;
+	//idx_t edgecut;
+	//idx_t part;
+	PackedInt32Array o_edgecut;
+	PackedInt32Array o_part;
+	//auto a = o_edgecut.ptrw();
+	// Call the function with variables
+	//return METIS_PartGraphKway(nvtxs, ncon, xadj, adjncy, vwgt, vsize, adjwgt, nparts, tpwgts, ubvec, options, edgecut, part);
+	idx_t *edgecut;
+	idx_t *part;
+
+	int status = METIS_PartGraphKway(
+			&nvtxs,
+			&ncon,
+			xadj_vec.ptrw(), //(int32_t *)&xadj_vec[0], // TODO check size > 0
+			adjncy_vec.ptrw(), //(int32_t *)&adjncy_vec[0],
+			nullptr,
+			nullptr,
+			// null for adjwgt, believe for grouping vertices, edges have same weight
+			// only count neighbor edge weight for grouping nodes partition
+			nullptr, //&adjwgt,
+			&p_num_partition,
+			nullptr,
+			nullptr,
+			options,
+			edgecut, //o_edgecut.ptrw(),
+			part); //o_part.ptrw());
+
+
 	Vector<VGNode> level;
+	level.resize(p_num_partition);
+	Vector<HashMap<int, int>> new_triangle_mapping;
+	new_triangle_mapping.resize(p_num_partition);
+
+	for (int i = 0; i < p_num_partition; i++ ) {
+		level.write[i] = VGNode();
+		new_triangle_mapping.write[i] = HashMap<int, int>();
+	}
+
+	for (int32_t vertex_i: p_indices) {
+		VGNode node = level.write[o_part[vertex_i]];
+		if (!new_triangle_mapping[o_part[vertex_i]].has(vertex_i)) {
+			node.vertices.append(p_vertices[vertex_i]);
+			int new_index = node.vertices.size() - 1;
+			node.indices.append(new_index); // index of vert array is the one just added
+			new_triangle_mapping.write[o_part[vertex_i]][vertex_i] = new_index;
+		} else {
+			node.indices.append(new_triangle_mapping[o_part[vertex_i]][vertex_i]);
+		}	
+		level.write[o_part[vertex_i]].vertices.append(p_vertices[vertex_i]);
+	}
+	/*
 	VGNode node;
 	int triangle_count = 0;
 	HashMap<int, int> new_triangle_mapping; // key: original vertex index, value: new vertex index that VGNode use
@@ -60,7 +183,7 @@ Vector<VGNode> MultiresolutionMeshBuilder::partition_triangles_to_nodes(const Ve
 
 	if (node.indices.size() > 0) {
 		level.append(node);
-	}
+	}*/
 
 	return level;
 }
@@ -203,11 +326,10 @@ PackedInt32Array MultiresolutionMeshBuilder::simplify_by_lod(Vector<Vector3> &p_
 			}
 		}
 
-		LocalVector<float> normal_weights;
-		normal_weights.resize(merged_vertex_count);
-		for (unsigned int j = 0; j < merged_vertex_count; j++) {
-			normal_weights[j] = 2.0; // Give some weight to normal preservation, may be worth exposing as an import setting
-		}
+		const float normal_weights[3] = {
+			// Give some weight to normal preservation, may be worth exposing as an import setting
+			2.0f, 2.0f, 2.0f
+		};
 
 		Vector<float> merged_vertices_f32 = vector3_to_float32_array(merged_vertices_ptr, merged_vertex_count);
 		float scale = SurfaceTool::simplify_scale_func(merged_vertices_f32.ptr(), merged_vertex_count, sizeof(float) * 3);
@@ -244,12 +366,13 @@ PackedInt32Array MultiresolutionMeshBuilder::simplify_by_lod(Vector<Vector3> &p_
 					(const uint32_t *)merged_indices_ptr, index_count,
 					merged_vertices_f32.ptr(), merged_vertex_count,
 					sizeof(float) * 3, // Vertex stride
+					merged_normals_f32.ptr(),
+					sizeof(float) * 3, // Attribute stride
+					normal_weights, 3,
 					index_target,
 					max_mesh_error,
 					simplify_options,
-					&mesh_error,
-					merged_normals_f32.ptr(),
-					normal_weights.ptr(), 3);
+					&mesh_error);
 
 			if (new_index_count < last_index_count * 1.5f) {
 				index_target = index_target * 1.5f;

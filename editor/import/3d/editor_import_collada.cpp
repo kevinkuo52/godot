@@ -922,14 +922,13 @@ Error ColladaImport::_create_mesh_surfaces(bool p_optimize, Ref<ImporterMesh> &p
 
 		multi_res_mesh_builder.generate_multiresolution_mesh(multi_res_verticies, model_indices);
 
-		/*	
-		auto indices = multi_res_mesh_builder.simplify_by_lod(multi_res_verticies, model_indices);
+		//auto indices = multi_res_mesh_builder.simplify_by_lod(multi_res_verticies, model_indices);
 
 		indices_list.clear();
-		for (auto index : indices) {
+		for (auto index : model_indices) {
 			indices_list.push_back(index);
 		}
-		*/
+		
 
 		/*****************/
 		/* MAKE SURFACES  */

@@ -7,11 +7,11 @@
 #include "core/math/convex_hull.h"
 #include "core/math/random_pcg.h"
 #include "scene/resources/mesh.h"
-#include "scene/resources/importer_mesh.h"
+#include "scene/resources/3d/importer_mesh.h"
 #include "servers/rendering_server.h"
 
-#include "scene/resources/concave_polygon_shape_3d.h"
-#include "scene/resources/convex_polygon_shape_3d.h"
+#include "scene/resources/3d/concave_polygon_shape_3d.h"
+#include "scene/resources/3d/convex_polygon_shape_3d.h"
 #include "scene/resources/navigation_mesh.h"
 
 class ConcavePolygonShape3D;
@@ -153,6 +153,7 @@ public:
 	//   v0 ref 0, v0 ref 1, v0 ref 2, v1 ref 0, v1 ref 1, v2 ref0, v2 ref1, v2 ref2
 	//   |____________v0____________|  |________v1______|  |________v2_____________|
 	Vector<VertRef> refs;
+	HashSet<Pair<VGNode, VGNode>> edge_lookup;
 
 	const int node_size = 128; //300; // maybe 1<<15
 	const int group_size = 24; // typically ranges 8 - 32
@@ -162,10 +163,15 @@ public:
 	void generate_multiresolution_mesh(Ref<ImporterMesh> p_mesh, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
 	//void generate_multiresolution_mesh(Vector<Surface> &surfaces, float p_normal_merge_angle, float p_normal_split_angle, Array p_skin_pose_transform_array);
 	void simplify_verticies_indicies_by_quadric_edge_collapse(Vector<Vector3> &p_verticies, List<int> &p_indices);
-	Vector<VGNode> partition_triangles_to_nodes(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices);
+	Vector<VGNode> partition_triangles_to_nodes(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices, const int p_num_partition);
 	Vector<Group> partition_nodes_to_groups(Vector<VGNode> &p_nodes);
 	VGNode merge_nodes(const Vector<VGNode*> &p_nodes);
 	void connect_all_children_to_all_parents(Vector<VGNode> &p_children, Vector<VGNode*> &p_parents);
+
+	// MetisHelper
+	int to_compressed_storage_format(const Vector<Vector3> &p_vertices, const PackedInt32Array &p_indices, int &o_xadj, int &o_adjncy );
+	void add_adj_pair(HashMap<int32_t, PackedInt32Array> &p_adj_graph, int32_t index_a, int32_t index_b);
+
 	// Simplify
 	PackedInt32Array simplify_by_lod(Vector<Vector3> &p_verticies, PackedInt32Array &p_indices); 
 	void simplify_by_quadric_edge_collapse(int target_count, double agressiveness = 7);
