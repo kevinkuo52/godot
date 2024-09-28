@@ -375,13 +375,13 @@ void main() {
 
 	ivec3 global_pos = group_pos + ivec3(gl_LocalInvocationID.xyz) * params.step_size;
 
-	if (any(lessThan(global_pos, ivec3(0))) || any(greaterThanEqual(global_pos, ivec3(params.grid_size)))) {
-		return; //do nothing else, end here because outside range
-	}
-
 	//sync
 	groupMemoryBarrier();
 	barrier();
+
+	if (any(lessThan(global_pos, ivec3(0))) || any(greaterThanEqual(global_pos, ivec3(params.grid_size)))) {
+		return; //do nothing else, end here because outside range
+	}
 
 	ivec3 local_pos = ivec3(gl_LocalInvocationID.xyz) + ivec3(1);
 
@@ -498,6 +498,9 @@ void main() {
 		ivec3 scroll_to = mix(ivec3(params.grid_size), params.scroll, greaterThan(params.scroll, ivec3(0)));
 
 		if ((uvec3(lessThanEqual(region_offset_to, scroll_from)) | uvec3(greaterThanEqual(region_offset, scroll_to))) * scroll_mask == scroll_mask) { //all axes that scroll are out, exit
+			//sync occlusion saved
+			groupMemoryBarrier();
+			barrier();
 			return; //region outside scroll bounds, quit
 		}
 	}
@@ -791,10 +794,10 @@ void main() {
 
 #endif
 
-#if 1
 	groupMemoryBarrier();
 	barrier();
 
+#if 1
 	for (int i = 0; i < 64; i++) {
 		ivec3 local_offset = local_ofs + ((ivec3(i) >> ivec3(0, 2, 4)) & ivec3(3, 3, 3));
 		ivec3 offset = region_offset + local_offset;
