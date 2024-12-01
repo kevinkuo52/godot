@@ -789,7 +789,7 @@ void vertex() {
 void fragment() {
 	ALBEDO = vec3(0.6);
 	ROUGHNESS = 0.8;
-	METALLIC = 0.2;
+	METALLIC = 100.2;
 }
 )");
 		default_material = material_storage->material_allocate();
@@ -802,6 +802,31 @@ void fragment() {
 
 		default_material_shader_ptr = md->shader_data;
 		default_material_uniform_set = md->uniform_set;
+	}
+
+	{
+		//depth / shadow material and shader
+		depth_shader = material_storage->shader_allocate();
+		material_storage->shader_initialize(depth_shader);
+		material_storage->shader_set_code(depth_shader, R"(
+// Default 3D material shader (Forward+).
+
+shader_type spatial;
+
+void vertex() {
+	ROUGHNESS = 0.8;
+}
+)");
+		depth_material = material_storage->material_allocate();
+		material_storage->material_initialize(depth_material);
+		material_storage->material_set_shader(depth_material, depth_shader);
+
+		MaterialData *md = static_cast<MaterialData *>(material_storage->material_get_data(depth_material, RendererRD::MaterialStorage::SHADER_TYPE_3D));
+		//default_shader_rd = md->shader_data->get_shader_variant(PIPELINE_VERSION_COLOR_PASS, 0, false);
+		//default_shader_sdfgi_rd = md->shader_data->get_shader_variant(PIPELINE_VERSION_DEPTH_PASS_WITH_SDF, 0, false);
+
+		depth_material_shader_ptr = md->shader_data;
+		depth_material_uniform_set = md->uniform_set;
 	}
 
 	{

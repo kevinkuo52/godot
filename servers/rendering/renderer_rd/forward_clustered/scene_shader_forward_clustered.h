@@ -324,6 +324,8 @@ public:
 
 	RID default_shader;
 	RID default_material;
+	RID depth_shader;
+	RID depth_material;
 	RID overdraw_material_shader;
 	RID overdraw_material;
 	RID debug_shadow_splits_material_shader;
@@ -338,6 +340,9 @@ public:
 
 	RID default_material_uniform_set;
 	ShaderData *default_material_shader_ptr = nullptr;
+
+	RID depth_material_uniform_set;
+	ShaderData *depth_material_shader_ptr = nullptr;
 
 	RID overdraw_material_uniform_set;
 	ShaderData *overdraw_material_shader_ptr = nullptr;
