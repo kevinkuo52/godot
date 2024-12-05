@@ -3303,134 +3303,286 @@ String RenderingDeviceDriverVulkan::shader_get_binary_cache_key() {
 	return "Vulkan-SV" + uitos(ShaderBinary::VERSION);
 }
 
-Vector<uint8_t> RenderingDeviceDriverVulkan::shader_compile_binary_from_spirv(VectorView<ShaderStageSPIRVData> p_spirv, const String &p_shader_name) {
-	ShaderReflection shader_refl;
-	if (_reflect_spirv(p_spirv, shader_refl) != OK) {
+#include "thirdparty/re_spirv/re-spirv.h"
+Vector<uint8_t> optimize_with_re_spirv(Vector<uint8_t> p_spirv, Vector<respv::SpecConstant> p_spec_constants) {
+	respv::Shader shader;
+	if (!shader.parse(p_spirv.ptr(), p_spirv.size())) {
+		ERR_PRINT("Failed to parse SPIR-V data for RE-SPIRV");
 		return Vector<uint8_t>();
 	}
 
-	ERR_FAIL_COND_V_MSG((uint32_t)shader_refl.uniform_sets.size() > physical_device_properties.limits.maxBoundDescriptorSets, Vector<uint8_t>(),
-			"Number of uniform sets is larger than what is supported by the hardware (" + itos(physical_device_properties.limits.maxBoundDescriptorSets) + ").");
+	std::vector<uint8_t> optimizedData;
+	std::vector<respv::SpecConstant> specConstants = {
+		respv::SpecConstant(0, { 3356565624U }),
+		respv::SpecConstant(1, { 1584128U }),
+		respv::SpecConstant(2, { 4229999620U }),
+		respv::SpecConstant(3, { 4279211007U }),
+		respv::SpecConstant(4, { 747626510U }),
+	};
 
-	// Collect reflection data into binary data.
-	ShaderBinary::Data binary_data;
-	Vector<Vector<ShaderBinary::DataBinding>> uniforms; // Set bindings.
-	Vector<ShaderBinary::SpecializationConstant> specialization_constants;
-	{
-		binary_data.vertex_input_mask = shader_refl.vertex_input_mask;
-		binary_data.fragment_output_mask = shader_refl.fragment_output_mask;
-		binary_data.specialization_constants_count = shader_refl.specialization_constants.size();
-		binary_data.is_compute = shader_refl.is_compute;
-		binary_data.compute_local_size[0] = shader_refl.compute_local_size[0];
-		binary_data.compute_local_size[1] = shader_refl.compute_local_size[1];
-		binary_data.compute_local_size[2] = shader_refl.compute_local_size[2];
-		binary_data.set_count = shader_refl.uniform_sets.size();
-		binary_data.push_constant_size = shader_refl.push_constant_size;
-		for (uint32_t i = 0; i < SHADER_STAGE_MAX; i++) {
-			if (shader_refl.push_constant_stages.has_flag((ShaderStage)(1 << i))) {
-				binary_data.vk_push_constant_stages_mask |= RD_STAGE_TO_VK_SHADER_STAGE_BITS[i];
-			}
-		}
-
-		for (const Vector<ShaderUniform> &set_refl : shader_refl.uniform_sets) {
-			Vector<ShaderBinary::DataBinding> set_bindings;
-			for (const ShaderUniform &uniform_refl : set_refl) {
-				ShaderBinary::DataBinding binding;
-				binding.type = (uint32_t)uniform_refl.type;
-				binding.binding = uniform_refl.binding;
-				binding.stages = (uint32_t)uniform_refl.stages;
-				binding.length = uniform_refl.length;
-				binding.writable = (uint32_t)uniform_refl.writable;
-				set_bindings.push_back(binding);
-			}
-			uniforms.push_back(set_bindings);
-		}
-
-		for (const ShaderSpecializationConstant &refl_sc : shader_refl.specialization_constants) {
-			ShaderBinary::SpecializationConstant spec_constant;
-			spec_constant.type = (uint32_t)refl_sc.type;
-			spec_constant.constant_id = refl_sc.constant_id;
-			spec_constant.int_value = refl_sc.int_value;
-			spec_constant.stage_flags = (uint32_t)refl_sc.stages;
-			specialization_constants.push_back(spec_constant);
-		}
+	if (!respv::Optimizer::run(shader, specConstants.data(), specConstants.size(), optimizedData)) {
+		ERR_PRINT("Failed to optimize SPIR-V data with Re-SPIRV");
+		return Vector<uint8_t>();
 	}
 
-	Vector<Vector<uint8_t>> compressed_stages;
-	Vector<uint32_t> smolv_size;
-	Vector<uint32_t> zstd_size; // If 0, zstd not used.
+	return p_spirv;
+}
 
-	uint32_t stages_binary_size = 0;
+struct SpirvSpecConst {
+	Vector<uint8_t> spirv;
+	Vector<respv::SpecConstant> spec_consts;
+};
 
-	bool strip_debug = false;
+#include <fstream>
+#include <iostream>
 
-	for (uint32_t i = 0; i < p_spirv.size(); i++) {
-		smolv::ByteArray smolv;
-		if (!smolv::Encode(p_spirv[i].spirv.ptr(), p_spirv[i].spirv.size(), smolv, strip_debug ? smolv::kEncodeFlagStripDebugInfo : 0)) {
-			ERR_FAIL_V_MSG(Vector<uint8_t>(), "Error compressing shader stage :" + String(SHADER_STAGE_NAMES[p_spirv[i].shader_stage]));
-		} else {
-			smolv_size.push_back(smolv.size());
-			{ // zstd.
-				Vector<uint8_t> zstd;
-				zstd.resize(Compression::get_max_compressed_buffer_size(smolv.size(), Compression::MODE_ZSTD));
-				int dst_size = Compression::compress(zstd.ptrw(), &smolv[0], smolv.size(), Compression::MODE_ZSTD);
+Vector<uint8_t> RenderingDeviceDriverVulkan::shader_compile_binary_from_spirv(VectorView<ShaderStageSPIRVData> p_spirv, const String &p_shader_name) {
+	try {
+		char filename[] = "C:\src\GodotProjects\godot2\debug_log_error.txt";
+		// Create an output file stream
+		std::ofstream outFile;
 
-				if (dst_size > 0 && (uint32_t)dst_size < smolv.size()) {
-					zstd_size.push_back(dst_size);
-					zstd.resize(dst_size);
-					compressed_stages.push_back(zstd);
-				} else {
-					Vector<uint8_t> smv;
-					smv.resize(smolv.size());
-					memcpy(smv.ptrw(), &smolv[0], smolv.size());
-					zstd_size.push_back(0); // Not using zstd.
-					compressed_stages.push_back(smv);
+		// Open the file
+		outFile.open(filename, std::fstream::app);
+
+		// Check if the file is open
+		if (!outFile.is_open()) {
+			std::cerr << "Failed to open the file:" << std::endl;
+			return Vector<uint8_t>();
+		}
+
+		// Write content to the file
+		outFile << "test";
+
+		// Close the file
+		outFile.close();
+
+		ShaderReflection shader_refl;
+		if (_reflect_spirv(p_spirv, shader_refl) != OK) {
+			return Vector<uint8_t>();
+		}
+
+		ERR_FAIL_COND_V_MSG((uint32_t)shader_refl.uniform_sets.size() > physical_device_properties.limits.maxBoundDescriptorSets, Vector<uint8_t>(),
+				"Number of uniform sets is larger than what is supported by the hardware (" + itos(physical_device_properties.limits.maxBoundDescriptorSets) + ").");
+
+		HashMap<ShaderStage, SpirvSpecConst> spirv_map;
+
+		for (uint32_t i = 0; i < p_spirv.size(); i++) {
+			auto iter = spirv_map.find(p_spirv[i].shader_stage);
+			if (iter == spirv_map.end()) {
+				spirv_map[p_spirv[i].shader_stage] = SpirvSpecConst{ p_spirv[i].spirv };
+			} else {
+				iter->value.spirv.append_array(p_spirv[i].spirv);
+			}
+		}
+
+		// Collect reflection data into binary data.
+		ShaderBinary::Data binary_data;
+		Vector<Vector<ShaderBinary::DataBinding>> uniforms; // Set bindings.
+		Vector<ShaderBinary::SpecializationConstant> specialization_constants;
+		Vector<respv::SpecConstant> re_spirv_spec_constants;
+		{
+			binary_data.vertex_input_mask = shader_refl.vertex_input_mask;
+			binary_data.fragment_output_mask = shader_refl.fragment_output_mask;
+			binary_data.specialization_constants_count = shader_refl.specialization_constants.size();
+			binary_data.is_compute = shader_refl.is_compute;
+			binary_data.compute_local_size[0] = shader_refl.compute_local_size[0];
+			binary_data.compute_local_size[1] = shader_refl.compute_local_size[1];
+			binary_data.compute_local_size[2] = shader_refl.compute_local_size[2];
+			binary_data.set_count = shader_refl.uniform_sets.size();
+			binary_data.push_constant_size = shader_refl.push_constant_size;
+			for (uint32_t i = 0; i < SHADER_STAGE_MAX; i++) {
+				if (shader_refl.push_constant_stages.has_flag((ShaderStage)(1 << i))) {
+					binary_data.vk_push_constant_stages_mask |= RD_STAGE_TO_VK_SHADER_STAGE_BITS[i];
 				}
 			}
+
+			for (const Vector<ShaderUniform> &set_refl : shader_refl.uniform_sets) {
+				Vector<ShaderBinary::DataBinding> set_bindings;
+				for (const ShaderUniform &uniform_refl : set_refl) {
+					ShaderBinary::DataBinding binding;
+					binding.type = (uint32_t)uniform_refl.type;
+					binding.binding = uniform_refl.binding;
+					binding.stages = (uint32_t)uniform_refl.stages;
+					binding.length = uniform_refl.length;
+					binding.writable = (uint32_t)uniform_refl.writable;
+					set_bindings.push_back(binding);
+				}
+				uniforms.push_back(set_bindings);
+			}
+
+			for (const ShaderSpecializationConstant &refl_sc : shader_refl.specialization_constants) {
+				ShaderBinary::SpecializationConstant spec_constant;
+				spec_constant.type = (uint32_t)refl_sc.type;
+				spec_constant.constant_id = refl_sc.constant_id;
+				spec_constant.int_value = refl_sc.int_value;
+				spec_constant.stage_flags = (uint32_t)refl_sc.stages;
+				specialization_constants.push_back(spec_constant);
+
+				respv::SpecConstant re_spirv_spec_constant;
+				re_spirv_spec_constant.specId = refl_sc.constant_id;
+				re_spirv_spec_constant.specId = refl_sc.int_value;
+
+				for (int i = 0; i < ShaderStage::SHADER_STAGE_MAX; ++i) {
+					ShaderStage flag = static_cast<ShaderStage>(1 << i);
+					auto iter = spirv_map.find(flag);
+					if (refl_sc.stages.has_flag(flag) && iter != spirv_map.end()) {
+						spirv_map[flag].spec_consts.push_back(re_spirv_spec_constant);
+					}
+				}
+				re_spirv_spec_constants.push_back(re_spirv_spec_constant);
+			}
 		}
-		uint32_t s = compressed_stages[i].size();
-		stages_binary_size += STEPIFY(s, 4);
-	}
 
-	binary_data.specialization_constants_count = specialization_constants.size();
-	binary_data.set_count = uniforms.size();
-	binary_data.stage_count = p_spirv.size();
+		Vector<ShaderStageSPIRVData> spirv_optimized;
+		spirv_optimized.resize(p_spirv.size());
+		bool use_optimized = true;
+		if (use_optimized) {
+			int i = 0;
+			for (auto kvp : spirv_map) {
+				bool fallback = true;
+				ShaderStageSPIRVData stage;
+				if (kvp.value.spirv.size() > 0 && kvp.value.spec_consts.size() > 0) {
+					stage.spirv = optimize_with_re_spirv(kvp.value.spirv, kvp.value.spec_consts);
 
-	CharString shader_name_utf = p_shader_name.utf8();
+					if (stage.spirv.size() > 0) {
+						fallback = false;
+					}
+				}
 
-	binary_data.shader_name_len = shader_name_utf.length();
+				if (fallback){
+					stage.spirv = kvp.value.spirv;
+				}
 
-	uint32_t total_size = sizeof(uint32_t) * 3; // Header + version + main datasize;.
-	total_size += sizeof(ShaderBinary::Data);
+				stage.shader_stage = kvp.key;
+				spirv_optimized.write[i] = stage;
+				i++;
+			}
+			/*
+			if (p_spirv.size() > 0 && p_spirv[0].shader_stage == SHADER_STAGE_MAX) {
+				ShaderStageSPIRVData stage;
+				stage.spirv = optimize_with_re_spirv(p_spirv[0].spirv, re_spirv_spec_constants);
+				spirv_optimized.write[0] = stage;
+			} else {
+				for (uint32_t i = 0; i < p_spirv.size(); i++) {
+					ShaderStageSPIRVData stage;
+					stage.spirv = optimize_with_re_spirv(p_spirv[i].spirv, re_spirv_spec_constants);
+					stage.shader_stage = p_spirv[i].shader_stage;
+					spirv_optimized.write[i] = stage;
+				}
+			}*/
+		}
 
-	total_size += STEPIFY(binary_data.shader_name_len, 4);
+		Vector<Vector<uint8_t>> compressed_stages;
+		Vector<uint32_t> smolv_size;
+		Vector<uint32_t> zstd_size; // If 0, zstd not used.
 
-	for (int i = 0; i < uniforms.size(); i++) {
-		total_size += sizeof(uint32_t);
-		total_size += uniforms[i].size() * sizeof(ShaderBinary::DataBinding);
-	}
+		uint32_t stages_binary_size = 0;
 
-	total_size += sizeof(ShaderBinary::SpecializationConstant) * specialization_constants.size();
+		bool strip_debug = false;
 
-	total_size += compressed_stages.size() * sizeof(uint32_t) * 3; // Sizes.
-	total_size += stages_binary_size;
+		if (use_optimized) {
+			for (uint32_t i = 0; i < spirv_optimized.size(); i++) {
+				smolv::ByteArray smolv;
+				if (!smolv::Encode(spirv_optimized[i].spirv.ptr(), spirv_optimized[i].spirv.size(), smolv, strip_debug ? smolv::kEncodeFlagStripDebugInfo : 0)) {
+					ERR_FAIL_V_MSG(Vector<uint8_t>(), "Error compressing shader stage :" + String(SHADER_STAGE_NAMES[spirv_optimized[i].shader_stage]));
+				} else {
+					smolv_size.push_back(smolv.size());
+					{ // zstd.
+						Vector<uint8_t> zstd;
+						zstd.resize(Compression::get_max_compressed_buffer_size(smolv.size(), Compression::MODE_ZSTD));
+						int dst_size = Compression::compress(zstd.ptrw(), &smolv[0], smolv.size(), Compression::MODE_ZSTD);
 
-	Vector<uint8_t> ret;
-	ret.resize(total_size);
-	{
-		uint32_t offset = 0;
-		uint8_t *binptr = ret.ptrw();
-		binptr[0] = 'G';
-		binptr[1] = 'S';
-		binptr[2] = 'B';
-		binptr[3] = 'D'; // Godot Shader Binary Data.
-		offset += 4;
-		encode_uint32(ShaderBinary::VERSION, binptr + offset);
-		offset += sizeof(uint32_t);
-		encode_uint32(sizeof(ShaderBinary::Data), binptr + offset);
-		offset += sizeof(uint32_t);
-		memcpy(binptr + offset, &binary_data, sizeof(ShaderBinary::Data));
-		offset += sizeof(ShaderBinary::Data);
+						if (dst_size > 0 && (uint32_t)dst_size < smolv.size()) {
+							zstd_size.push_back(dst_size);
+							zstd.resize(dst_size);
+							compressed_stages.push_back(zstd);
+						} else {
+							Vector<uint8_t> smv;
+							smv.resize(smolv.size());
+							memcpy(smv.ptrw(), &smolv[0], smolv.size());
+							zstd_size.push_back(0); // Not using zstd.
+							compressed_stages.push_back(smv);
+						}
+					}
+				}
+				uint32_t s = compressed_stages[i].size();
+				stages_binary_size += STEPIFY(s, 4);
+			}
+
+			binary_data.specialization_constants_count = specialization_constants.size();
+			binary_data.set_count = uniforms.size();
+			binary_data.stage_count = spirv_optimized.size();
+
+		} else {
+			for (uint32_t i = 0; i < p_spirv.size(); i++) {
+				smolv::ByteArray smolv;
+				if (!smolv::Encode(p_spirv[i].spirv.ptr(), p_spirv[i].spirv.size(), smolv, strip_debug ? smolv::kEncodeFlagStripDebugInfo : 0)) {
+					ERR_FAIL_V_MSG(Vector<uint8_t>(), "Error compressing shader stage :" + String(SHADER_STAGE_NAMES[p_spirv[i].shader_stage]));
+				} else {
+					smolv_size.push_back(smolv.size());
+					{ // zstd.
+						Vector<uint8_t> zstd;
+						zstd.resize(Compression::get_max_compressed_buffer_size(smolv.size(), Compression::MODE_ZSTD));
+						int dst_size = Compression::compress(zstd.ptrw(), &smolv[0], smolv.size(), Compression::MODE_ZSTD);
+
+						if (dst_size > 0 && (uint32_t)dst_size < smolv.size()) {
+							zstd_size.push_back(dst_size);
+							zstd.resize(dst_size);
+							compressed_stages.push_back(zstd);
+						} else {
+							Vector<uint8_t> smv;
+							smv.resize(smolv.size());
+							memcpy(smv.ptrw(), &smolv[0], smolv.size());
+							zstd_size.push_back(0); // Not using zstd.
+							compressed_stages.push_back(smv);
+						}
+					}
+				}
+				uint32_t s = compressed_stages[i].size();
+				stages_binary_size += STEPIFY(s, 4);
+			}
+
+			binary_data.specialization_constants_count = specialization_constants.size();
+			binary_data.set_count = uniforms.size();
+			binary_data.stage_count = p_spirv.size();
+		}
+
+		CharString shader_name_utf = p_shader_name.utf8();
+
+		binary_data.shader_name_len = shader_name_utf.length();
+
+		uint32_t total_size = sizeof(uint32_t) * 3; // Header + version + main datasize;.
+		total_size += sizeof(ShaderBinary::Data);
+
+		total_size += STEPIFY(binary_data.shader_name_len, 4);
+
+		for (int i = 0; i < uniforms.size(); i++) {
+			total_size += sizeof(uint32_t);
+			total_size += uniforms[i].size() * sizeof(ShaderBinary::DataBinding);
+		}
+
+		total_size += sizeof(ShaderBinary::SpecializationConstant) * specialization_constants.size();
+
+		total_size += compressed_stages.size() * sizeof(uint32_t) * 3; // Sizes.
+		total_size += stages_binary_size;
+
+		Vector<uint8_t> ret;
+		ret.resize(total_size);
+		{
+			uint32_t offset = 0;
+			uint8_t *binptr = ret.ptrw();
+			binptr[0] = 'G';
+			binptr[1] = 'S';
+			binptr[2] = 'B';
+			binptr[3] = 'D'; // Godot Shader Binary Data.
+			offset += 4;
+			encode_uint32(ShaderBinary::VERSION, binptr + offset);
+			offset += sizeof(uint32_t);
+			encode_uint32(sizeof(ShaderBinary::Data), binptr + offset);
+			offset += sizeof(uint32_t);
+			memcpy(binptr + offset, &binary_data, sizeof(ShaderBinary::Data));
+			offset += sizeof(ShaderBinary::Data);
 
 #define ADVANCE_OFFSET_WITH_ALIGNMENT(m_bytes)                         \
 	{                                                                  \
@@ -3440,42 +3592,74 @@ Vector<uint8_t> RenderingDeviceDriverVulkan::shader_compile_binary_from_spirv(Ve
 		offset += padding;                                             \
 	}
 
-		if (binary_data.shader_name_len > 0) {
-			memcpy(binptr + offset, shader_name_utf.ptr(), binary_data.shader_name_len);
-			ADVANCE_OFFSET_WITH_ALIGNMENT(binary_data.shader_name_len);
-		}
-
-		for (int i = 0; i < uniforms.size(); i++) {
-			int count = uniforms[i].size();
-			encode_uint32(count, binptr + offset);
-			offset += sizeof(uint32_t);
-			if (count > 0) {
-				memcpy(binptr + offset, uniforms[i].ptr(), sizeof(ShaderBinary::DataBinding) * count);
-				offset += sizeof(ShaderBinary::DataBinding) * count;
+			if (binary_data.shader_name_len > 0) {
+				memcpy(binptr + offset, shader_name_utf.ptr(), binary_data.shader_name_len);
+				ADVANCE_OFFSET_WITH_ALIGNMENT(binary_data.shader_name_len);
 			}
+
+			for (int i = 0; i < uniforms.size(); i++) {
+				int count = uniforms[i].size();
+				encode_uint32(count, binptr + offset);
+				offset += sizeof(uint32_t);
+				if (count > 0) {
+					memcpy(binptr + offset, uniforms[i].ptr(), sizeof(ShaderBinary::DataBinding) * count);
+					offset += sizeof(ShaderBinary::DataBinding) * count;
+				}
+			}
+
+			if (specialization_constants.size()) {
+				memcpy(binptr + offset, specialization_constants.ptr(), sizeof(ShaderBinary::SpecializationConstant) * specialization_constants.size());
+				offset += sizeof(ShaderBinary::SpecializationConstant) * specialization_constants.size();
+			}
+
+			for (int i = 0; i < compressed_stages.size(); i++) {
+				if (use_optimized) {
+					encode_uint32(spirv_optimized[i].shader_stage, binptr + offset);
+				} else {
+					encode_uint32(p_spirv[i].shader_stage, binptr + offset);
+				}
+
+				offset += sizeof(uint32_t);
+				encode_uint32(smolv_size[i], binptr + offset);
+				offset += sizeof(uint32_t);
+				encode_uint32(zstd_size[i], binptr + offset);
+				offset += sizeof(uint32_t);
+				memcpy(binptr + offset, compressed_stages[i].ptr(), compressed_stages[i].size());
+				ADVANCE_OFFSET_WITH_ALIGNMENT(compressed_stages[i].size());
+			}
+
+			DEV_ASSERT(offset == (uint32_t)ret.size());
 		}
 
-		if (specialization_constants.size()) {
-			memcpy(binptr + offset, specialization_constants.ptr(), sizeof(ShaderBinary::SpecializationConstant) * specialization_constants.size());
-			offset += sizeof(ShaderBinary::SpecializationConstant) * specialization_constants.size();
-		}
+		return ret;
 
-		for (int i = 0; i < compressed_stages.size(); i++) {
-			encode_uint32(p_spirv[i].shader_stage, binptr + offset);
-			offset += sizeof(uint32_t);
-			encode_uint32(smolv_size[i], binptr + offset);
-			offset += sizeof(uint32_t);
-			encode_uint32(zstd_size[i], binptr + offset);
-			offset += sizeof(uint32_t);
-			memcpy(binptr + offset, compressed_stages[i].ptr(), compressed_stages[i].size());
-			ADVANCE_OFFSET_WITH_ALIGNMENT(compressed_stages[i].size());
-		}
-
-		DEV_ASSERT(offset == (uint32_t)ret.size());
 	}
+	catch (const std::exception &e) {
+		
+		char filename[] = "C:\src\GodotProjects\godot2\debug_log_error.txt";
+		// Create an output file stream
+		std::ofstream outFile;
 
-	return ret;
+		// Open the file
+		outFile.open(filename, std::fstream::app);
+
+		// Check if the file is open
+		if (!outFile.is_open()) {
+			std::cerr << "Failed to open the file:"<< std::endl;
+			return Vector<uint8_t>();
+		}
+
+		// Write content to the file
+		outFile << "Error: "<< e.what();
+
+		// Close the file
+		outFile.close();
+		return Vector<uint8_t>();
+	}
+	return Vector<uint8_t>();
 }
+
+
 
 RDD::ShaderID RenderingDeviceDriverVulkan::shader_create_from_bytecode(const Vector<uint8_t> &p_shader_binary, ShaderDescription &r_shader_desc, String &r_name) {
 	r_shader_desc = {}; // Driver-agnostic.
